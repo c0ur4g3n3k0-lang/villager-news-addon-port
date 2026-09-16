@@ -1,9 +1,18 @@
-#
-# https://help.github.com/articles/dealing-with-line-endings/
-#
-# Linux start script should use lf
+# Keep source files consistent on Windows and Unix, independent of core.autocrlf.
+*               text=auto
+/.gitattributes  text eol=lf
+/.gitignore      text eol=lf
+*.java          text eol=lf
+*.json          text eol=lf
+*.jem           text eol=lf
+*.mjs           text eol=lf
+*.md            text eol=lf
+*.gradle        text eol=lf
+*.properties    text eol=lf
+*.yml           text eol=lf
+*.ps1           text eol=lf
 /gradlew        text eol=lf
 
-# These are Windows script files and should use crlf
+# The Windows wrapper is the only intentionally CRLF script.
 *.bat           text eol=crlf
 

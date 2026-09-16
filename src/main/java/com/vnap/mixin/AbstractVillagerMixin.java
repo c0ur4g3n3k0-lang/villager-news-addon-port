@@ -17,22 +17,23 @@ public abstract class AbstractVillagerMixin {
 	@Inject(method = "notifyTrade", at = @At("TAIL"))
 	private void vnap$onTradeCompleted(MerchantOffer offer, CallbackInfo ci) {
 		AbstractVillager trader = (AbstractVillager) (Object) this;
+		if (trader.level().isClientSide()) return;
 		Player player = trader.getTradingPlayer();
 		if (player != null) ContextualDialogueController.onTradeCompleted(trader, player);
 	}
 
 	@Inject(method = "getNotifyTradeSound", at = @At("HEAD"), cancellable = true)
 	private void vnap$removeVanillaTradeSound(CallbackInfoReturnable<SoundEvent> cir) {
-		cir.setReturnValue(SoundEvents.EMPTY);
+		if (!((AbstractVillager) (Object) this).level().isClientSide()) cir.setReturnValue(SoundEvents.EMPTY);
 	}
 
 	@Inject(method = "getTradeUpdatedSound", at = @At("HEAD"), cancellable = true)
 	private void vnap$removeVanillaTradeUpdatedSound(boolean sold, CallbackInfoReturnable<SoundEvent> cir) {
-		cir.setReturnValue(SoundEvents.EMPTY);
+		if (!((AbstractVillager) (Object) this).level().isClientSide()) cir.setReturnValue(SoundEvents.EMPTY);
 	}
 
 	@Inject(method = "playCelebrateSound", at = @At("HEAD"), cancellable = true)
 	private void vnap$removeVanillaCelebrateSound(CallbackInfo ci) {
-		ci.cancel();
+		if (!((AbstractVillager) (Object) this).level().isClientSide()) ci.cancel();
 	}
 }

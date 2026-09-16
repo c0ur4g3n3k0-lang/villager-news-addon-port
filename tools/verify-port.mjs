@@ -25,32 +25,54 @@ const signLayerSource = readFileSync(join(root, "src/main/java/com/vnap/client/V
 const professionLayerSource = readFileSync(join(root, "src/main/java/com/vnap/mixin/client/VillagerProfessionLayerMixin.java"), "utf8");
 const villagerRendererSource = readFileSync(join(root, "src/main/java/com/vnap/mixin/client/VillagerRendererMixin.java"), "utf8");
 const villagerSoundSource = readFileSync(join(root, "src/main/java/com/vnap/mixin/VillagerSoundMixin.java"), "utf8");
+const sheepSoundSource = readFileSync(join(root, "src/main/java/com/vnap/mixin/SheepSoundMixin.java"), "utf8");
+const wanderingTraderSoundSource = readFileSync(join(root, "src/main/java/com/vnap/mixin/WanderingTraderSoundMixin.java"), "utf8");
+const compatibilitySource = readFileSync(join(root, "src/main/java/com/vnap/client/ServerCompatibilityState.java"), "utf8");
+const clientOnlySource = readFileSync(join(root, "src/main/java/com/vnap/client/ClientOnlyDialogueController.java"), "utf8");
+const clientOnlySoundGateSource = readFileSync(join(root, "src/main/java/com/vnap/client/ClientOnlyVanillaSoundGate.java"), "utf8");
+const clientPacketListenerMixinSource = readFileSync(join(root, "src/main/java/com/vnap/mixin/client/ClientPacketListenerMixin.java"), "utf8");
 const subtitleSource = readFileSync(join(root, "src/main/java/com/vnap/client/DialogueSubtitleState.java"), "utf8");
+const specialSpeakerNamesSource = readFileSync(join(root, "src/main/java/com/vnap/client/SpecialSpeakerNames.java"), "utf8");
+const subtitleHudSource = readFileSync(join(root, "src/main/java/com/vnap/client/VillagerNewsSubtitleHud.java"), "utf8");
 const soundStateSource = readFileSync(join(root, "src/main/java/com/vnap/client/DialogueSoundState.java"), "utf8");
 const animationStateSource = readFileSync(join(root, "src/main/java/com/vnap/client/DialogueAnimationState.java"), "utf8");
 const settingsSource = readFileSync(join(root, "src/main/java/com/vnap/config/VillagerNewsSettings.java"), "utf8");
 const settingsStateSource = readFileSync(join(root, "src/main/java/com/vnap/client/VillagerNewsSettingsState.java"), "utf8");
+const clientSettingsSource = readFileSync(join(root, "src/main/java/com/vnap/client/VillagerNewsClientSettings.java"), "utf8");
+const keyMappingsSource = readFileSync(join(root, "src/main/java/com/vnap/client/VillagerNewsKeyMappings.java"), "utf8");
 const modMenuSource = readFileSync(join(root, "src/main/java/com/vnap/client/VillagerNewsModMenu.java"), "utf8");
 const settingsNetworkSource = readFileSync(join(root, "src/main/java/com/vnap/network/VillagerNewsSettingsNetwork.java"), "utf8");
 const settingsPayloadSource = readFileSync(join(root, "src/main/java/com/vnap/network/VillagerNewsSettingsPayload.java"), "utf8");
 const abstractVillagerSource = readFileSync(join(root, "src/main/java/com/vnap/mixin/AbstractVillagerMixin.java"), "utf8");
 const villagerDataSource = readFileSync(join(root, "src/main/java/com/vnap/mixin/VillagerDataMixin.java"), "utf8");
+const tradeBackupSource = readFileSync(join(root, "src/main/java/com/vnap/entity/VillagerTradeBackup.java"), "utf8");
 const mixinConfiguration = readFileSync(join(resources, "villager-news-addon-port.mixins.json"), "utf8");
+const clientMixinConfiguration = readFileSync(join(resources, "villager-news-addon-port.client.mixins.json"), "utf8");
 const generatorSource = readFileSync(join(root, "tools/port-addon.mjs"), "utf8");
+const signMessages = JSON.parse(readFileSync(join(root, "tools/sign-messages.json"), "utf8"));
+const handbookLocalizationSource = readFileSync(join(root, "tools/sync-handbook-language.mjs"), "utf8");
 const villagerModelSource = readFileSync(join(cem, "villager.jem"), "utf8");
 const gradleProperties = readFileSync(join(root, "gradle.properties"), "utf8");
 const language = JSON.parse(readFileSync(join(modAssets, "lang", "en_us.json"), "utf8"));
-const handbookHeldModel = JSON.parse(readFileSync(join(modAssets, "models", "item", "handbook_held.json"), "utf8"));
-const microphoneHeldModel = JSON.parse(readFileSync(join(modAssets, "models", "item", "microphone_held.json"), "utf8"));
+const russianLanguage = JSON.parse(readFileSync(join(modAssets, "lang", "ru_ru.json"), "utf8"));
 
-const ffmpeg = [
-  process.env.FFMPEG_PATH,
-  "C:\\Users\\marcy\\Downloads\\LiSA-win32-x64-2.1.0\\resources\\resources\\lisa\\_internal\\ffmpeg.exe",
-].filter(Boolean).find(existsSync);
+function executableAvailable(executable) {
+  if (!executable) return false;
+  try {
+    execFileSync(executable, ["-version"], { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const ffmpeg = [process.env.FFMPEG_PATH, "ffmpeg"].find(executableAvailable);
 
 function check(condition, message) {
   if (!condition) throw new Error(message);
 }
+
+check(ffmpeg, "FFmpeg is required for image verification. Add it to PATH or set FFMPEG_PATH to its executable.");
 
 const groups = Object.entries(catalog.groups);
 check(groups.length === 523, `Expected 523 dialogue groups, found ${groups.length}`);
@@ -80,16 +102,106 @@ for (const [id, group] of groups) {
 check(variantCount === 2212, `Expected 2212 synchronized variants, found ${variantCount}`);
 check(subtitleCount === 3741, `Expected 3741 timed subtitles, found ${subtitleCount}`);
 check(clientSource.includes("DialogueSubtitleState.start(payload)")
-  && clientSource.includes("DialogueSubtitleState.register()")
+  && clientSource.includes("VillagerNewsSubtitleHud.register()")
   && clientSource.includes("DialogueSubtitleState.tick(client)"),
 "The timed subtitle client is not registered");
-check(subtitleSource.includes("VillagerNewsClientSettings.showSubtitles()")
-  && subtitleSource.includes("HudElementRegistry.attachElementAfter")
-  && subtitleSource.includes("MAX_LINES = 4")
-  && subtitleSource.includes("subtitleScale")
+check(clientSource.includes("VillagerNewsClientSettings.load()")
+	&& clientSettingsSource.includes("villager-news-addon-port-client.json")
+	&& clientSettingsSource.includes("private static boolean subtitlesEnabled = true")
+	&& clientSettingsSource.includes("setSubtitlesEnabled(boolean enabled)")
+	&& handbookSource.includes("VillagerNewsClientSettings.setSubtitlesEnabled(enabled)")
+	&& handbookSource.includes("settings.villager-news-addon-port.subtitles")
+	&& !handbookSource.includes("showSubtitles")
+	&& language["settings.villager-news-addon-port.subtitles"] === "Villager News Subtitles"
+	&& !settingsSource.includes("subtitlesEnabled")
+	&& !settingsPayloadSource.includes("subtitlesEnabled")
+	&& !settingsNetworkSource.includes("subtitlesEnabled"),
+"Villager News subtitles do not have an isolated, enabled-by-default client preference");
+check(clientSource.includes("VillagerNewsKeyMappings.register()")
+	&& clientSource.includes("VillagerNewsKeyMappings.tick(client)")
+	&& keyMappingsSource.includes("KeyMappingHelper.registerKeyMapping(new KeyMapping(")
+	&& keyMappingsSource.includes("KeyMapping.Category.register(VillagerNewsAddonPort.id(\"general\"))")
+	&& keyMappingsSource.includes("InputConstants.KEY_N")
+	&& keyMappingsSource.includes("openSettings.consumeClick()")
+	&& keyMappingsSource.includes("client.gui.screen() == null")
+	&& keyMappingsSource.includes("HandbookScreen.settingsScreen(null)")
+	&& !keyMappingsSource.includes("InputConstants.isKeyDown")
+	&& language["key.category.villager-news-addon-port.general"] === "Villager News"
+	&& language["key.villager-news-addon-port.open_settings"] === "Open Villager News Settings",
+"The in-game settings shortcut is not a remappable client key mapping");
+check(!subtitleSource.includes("HudElementRegistry")
+  && !subtitleSource.includes("GuiGraphicsExtractor")
+	&& subtitleSource.includes("public static List<VisibleSubtitle> visible(Minecraft minecraft, long now)")
+	&& subtitleSource.includes("frameStartNanos")
+	&& subtitleSource.includes("frameEndNanos")
+	&& subtitleHudSource.includes("HudElementRegistry.attachElementAfter")
+	&& subtitleHudSource.includes("DialogueSubtitleState.visible")
+	&& subtitleHudSource.includes("VillagerNewsClientSettings.subtitlesEnabled()")
+	&& !subtitleSource.includes("showSubtitles")
+	&& !subtitleHudSource.includes("showSubtitles")
+	&& subtitleHudSource.includes("MAX_CARDS = 4")
+	&& subtitleHudSource.includes("graphics.guiHeight() - BOTTOM_MARGIN")
+	&& subtitleHudSource.includes("(graphics.guiWidth() - layout.width()) / 2")
+	&& subtitleHudSource.includes("graphics.fill(left, top, left + layout.width(), top + layout.height(), applyOpacity(BACKGROUND_COLOR, opacity))")
+	&& subtitleHudSource.includes("graphics.text(font, line, centerX - font.width(line) / 2, lineY, applyOpacity(SPEAKER_COLOR, opacity), true)")
+	&& subtitleHudSource.includes("graphics.text(font, line, centerX - font.width(line) / 2, lineY, applyOpacity(TRANSCRIPT_COLOR, opacity), true)")
 	&& subtitleSource.includes("RANGE_SQUARED")
-	&& subtitleSource.includes("y -= minecraft.font.lineHeight + 3.0F")
-	&& !subtitleSource.includes("lineHeight + 3.0F) * scale"), "The stacked subtitle HUD behavior is incomplete");
+	&& subtitleHudSource.includes("bottomY = top - CARD_GAP")
+	&& !subtitleHudSource.includes("subtitleLine("), "The separated bottom-center subtitle card HUD is incomplete");
+check(subtitleHudSource.includes("MAX_WIDTH_RATIO = 0.60F")
+	&& subtitleHudSource.includes("font.split(speaker, textWidth)")
+	&& subtitleHudSource.includes("font.split(transcript, textWidth)")
+	&& subtitleHudSource.includes("cardHeight(font.lineHeight, speakerLines.size(), transcriptLines.size())")
+	&& subtitleHudSource.includes("for (FormattedCharSequence line : layout.speakerLines())")
+	&& subtitleHudSource.includes("for (FormattedCharSequence line : layout.transcriptLines())")
+	&& subtitleHudSource.includes("firstCardBottom(graphics.guiHeight(), layout.height())"),
+"Subtitle cards can exceed the GUI or truncate wrapped lines");
+check(subtitleHudSource.includes("subtitle.frameStartNanos()")
+	&& subtitleHudSource.includes("subtitle.frameEndNanos()")
+	&& subtitleHudSource.includes("FADE_IN_NANOS = 100_000_000L")
+	&& subtitleHudSource.includes("FADE_OUT_NANOS = 150_000_000L")
+	&& subtitleHudSource.includes("applyOpacity(BACKGROUND_COLOR, opacity)")
+	&& subtitleHudSource.includes("applyOpacity(SPEAKER_COLOR, opacity)")
+	&& subtitleHudSource.includes("applyOpacity(TRANSCRIPT_COLOR, opacity)"),
+"The subtitle HUD fade is not derived from the existing frame lifetime");
+const serverReceiver = clientSource.indexOf("ClientPlayNetworking.registerGlobalReceiver(DialogueAnimationPayload.TYPE");
+const serverSound = clientSource.indexOf("DialogueSoundState.start(payload);", serverReceiver);
+const serverAnimation = clientSource.indexOf("DialogueAnimationState.start(payload);", serverSound);
+const serverSubtitle = clientSource.indexOf("DialogueSubtitleState.start(payload);", serverAnimation);
+const fallbackPayload = clientOnlySource.indexOf("DialogueAnimationPayload payload =");
+const fallbackSound = clientOnlySource.indexOf("DialogueSoundState.start(payload);", fallbackPayload);
+const fallbackAnimation = clientOnlySource.indexOf("DialogueAnimationState.start(payload);", fallbackSound);
+const fallbackSubtitle = clientOnlySource.indexOf("DialogueSubtitleState.start(payload);", fallbackAnimation);
+check(serverReceiver >= 0 && serverSound > serverReceiver && serverAnimation > serverSound && serverSubtitle > serverAnimation
+	&& fallbackPayload >= 0 && fallbackSound > fallbackPayload && fallbackAnimation > fallbackSound
+	&& fallbackSubtitle > fallbackAnimation
+	&& !clientOnlySource.includes("HudElementRegistry")
+	&& subtitleHudSource.includes("DialogueSubtitleState.visible(minecraft, now)"),
+"Server-backed and client-only dialogues do not share one subtitle pipeline");
+check(subtitleSource.includes("usesSpeakerSnapshot(active.persistsAfterDeath(), speakerPresent, speakerAlive)")
+	&& subtitleSource.includes("useSnapshot ? active.position() : entity.position()")
+	&& subtitleSource.includes("useSnapshot ? active.speakerName() : speakerName(entity)")
+	&& subtitleSource.includes("return frameAt(subtitles, startNanos, now)")
+	&& subtitleSource.includes("DialogueSubtitleState.frameEndNanos(subtitles, startNanos, endNanos, frame)"),
+"Subtitle segment timing or death speaker snapshots are not preserved");
+const localizedSpeakers = {
+  mayor: "Мэр",
+  testificate_man: "Тестификат-мэн",
+  number_5: "Житель №5",
+  number_9: "Житель №9",
+  unreachable: "Неприкасаемый житель",
+  wooly: "Вулли"
+};
+check(Object.entries(localizedSpeakers).every(([speaker, name]) =>
+    language[`speaker.villager-news-addon-port.${speaker}`]
+    && russianLanguage[`speaker.villager-news-addon-port.${speaker}`] === name)
+  && subtitleSource.includes("SpecialSpeakerNames.villagerKey(customName.getString())")
+  && subtitleSource.includes("SpecialSpeakerNames.sheepKey(customName.getString())")
+  && subtitleSource.includes("return Component.translatable(key)")
+  && !subtitleSource.includes("setCustomName(")
+  && specialSpeakerNamesSource.includes('case "wooly", "wooly the sheep"')
+  && specialSpeakerNamesSource.includes('case "villager #9", "villager number 9"'),
+"Special speaker names are not translated exclusively in the subtitle presentation layer");
 check(animations.gestures.length === 46, `Expected 46 dialogue gestures, found ${animations.gestures.length}`);
 check(animations.locomotion?.duration === 0.4375
   && Object.keys(animations.locomotion.tracks).length === 14
@@ -98,25 +210,6 @@ check(animations.locomotion?.duration === 0.4375
   && animations.locomotion.tracks.right_leg_rx
   && animations.locomotion.tracks.right_leg_ty,
 "The original Bedrock walking animation is incomplete");
-check(animations.runLocomotion?.duration === 0.4375
-  && animations.runLocomotion.tracks.left_leg_rx
-  && animations.runLocomotion.tracks.left_leg_ty
-  && animations.runLocomotion.tracks.right_leg_rx
-  && animations.runLocomotion.tracks.right_leg_ty,
-"The original Bedrock running animation is incomplete");
-check(animationStateSource.includes("RUN_ENTER_SPEED = 0.6F")
-  && animationStateSource.includes("RUN_EXIT_SPEED = 0.3F")
-  && animationStateSource.includes("locomotionState.update(age, speed, groundedMovement)"),
-"The original Bedrock run transition thresholds are not applied");
-check(JSON.stringify(handbookHeldModel.display.thirdperson_righthand.rotation) === "[-75,0,0]"
-  && JSON.stringify(handbookHeldModel.display.thirdperson_lefthand.rotation) === "[-75,0,0]"
-  && JSON.stringify(handbookHeldModel.display.firstperson_righthand.rotation) === "[90,0,180]"
-  && JSON.stringify(handbookHeldModel.display.firstperson_lefthand.rotation) === "[90,0,180]"
-  && JSON.stringify(microphoneHeldModel.display.thirdperson_righthand.rotation) === "[0,-90,-125]"
-  && JSON.stringify(microphoneHeldModel.display.thirdperson_lefthand.rotation) === "[0,90,125]",
-"The original Bedrock held-item orientations are not applied");
-check(!animationStateSource.includes("poseWeightAt(active.elapsedSeconds())"),
-"Dialogue gestures still suppress the locomotion leg tracks");
 check(animations.idles?.length === 6 && animations.idles.every((idle) => idle.duration > 0
   && Object.keys(idle.tracks).length > 0), "The six original Bedrock idle animations are incomplete");
 check(animations.continuousIdle === "animation.oreville_vn.fyqjnp"
@@ -129,7 +222,7 @@ check(animations.turnLeft === "animation.oreville_vn.aiqbsm"
 "The original left-turn and right-turn animation controller is missing");
 check(animationStateSource.includes("walkAnimation.position(partialTick)")
   && animationStateSource.includes("IDLE_STATES")
-	&& animationStateSource.includes("horizontalDistanceSqr > 0.0001")
+	&& animationStateSource.includes("horizontalDistanceSqr() > 0.0001")
 	&& animationStateSource.includes("startNext(tick, -1)")
 	&& animationStateSource.includes("blendFromIndex")
 	&& animationStateSource.includes("getGameTimeDeltaPartialTick(true)")
@@ -142,10 +235,7 @@ check(animationStateSource.includes("walkAnimation.position(partialTick)")
 	&& animationStateSource.includes("active.transition(variableName, result)")
 	&& animationStateSource.includes("EMPTY_TIMELINE")
 	&& animationStateSource.includes("if (active) advance(tick)")
-	&& animationStateSource.includes("locomotion.valueAt")
-	&& animationStateSource.includes("runLocomotion.valueAt")
-	&& animationStateSource.includes("RUN_ENTER_SPEED")
-	&& animationStateSource.includes("RUN_EXIT_SPEED"), "The client does not continuously and smoothly play locomotion and stationary idle tracks");
+	&& animationStateSource.includes("locomotion.valueAt"), "The client does not continuously and smoothly play locomotion and stationary idle tracks");
 	check(generatorSource.includes("torad(vnap_look_pitch*0.5)")
 		&& generatorSource.includes("torad(vnap_look_yaw*0.77)")
 		&& generatorSource.includes("max(-0.45,min(0.45,vnap_look_yaw/60))*-1")
@@ -324,11 +414,55 @@ check(behaviorSource.includes("BABY_DIALOGUES")
   && behaviorSource.includes('"cxeziv", "riezum", "rlkdqd"'),
 "Baby villagers can speak adult dialogue or use the adult death voice");
 check(villagerSoundSource.includes("vnap$removeVanillaHurtSound")
-  && villagerSoundSource.includes("cir.setReturnValue(SoundEvents.EMPTY)"), "Vanilla villager hurt sounds can overlap dialogue");
+	&& villagerSoundSource.includes("level().isClientSide()")
+	&& villagerSoundSource.includes("cir.setReturnValue(SoundEvents.EMPTY)"), "Vanilla villager hurt sounds can overlap dialogue or be suppressed client-side");
 check(villagerSoundSource.includes("vnap$removeVanillaAmbientSound")
   && abstractVillagerSource.includes("vnap$removeVanillaTradeSound")
   && abstractVillagerSource.includes("vnap$removeVanillaTradeUpdatedSound")
-  && abstractVillagerSource.includes("vnap$removeVanillaCelebrateSound"), "Vanilla villager voice sounds can leak through ESF");
+	&& abstractVillagerSource.includes("vnap$removeVanillaCelebrateSound")
+	&& abstractVillagerSource.includes("level().isClientSide()")
+	&& sheepSoundSource.includes("vnap$isServerWooly")
+	&& wanderingTraderSoundSource.includes("vnap$isLogicalServer"), "Vanilla entity voices are not suppressed exclusively by the logical server");
+check(clientSource.includes("ServerCompatibilityState::detectServerSupport")
+	&& clientSource.includes("ServerCompatibilityState.markServerModPresent()")
+	&& compatibilitySource.includes("ClientPlayNetworking.canSend(VillagerNewsSettingsPayload.TYPE)")
+	&& compatibilitySource.includes("Support.ABSENT"), "Client/server compatibility mode is not detected on connection");
+check(clientSource.includes("ClientOnlyDialogueController.register()")
+	&& clientSource.includes("ClientOnlyDialogueController.tick(client)")
+	&& clientSource.includes("ClientOnlyDialogueController.clear(client)")
+	&& clientOnlySource.includes("ServerCompatibilityState.clientOnlyFallback()")
+	&& clientOnlySource.includes("DialogueSoundState.start(payload)")
+	&& clientOnlySource.includes("DialogueAnimationState.start(payload)")
+	&& clientOnlySource.includes("DialogueSubtitleState.start(payload)")
+	&& clientOnlySource.includes("ClientPlayerBlockBreakEvents.AFTER.register")
+	&& clientOnlySource.includes("PENDING_PLACEMENTS.put")
+	&& clientOnlySource.includes("PENDING_BREAKS.put")
+	&& !clientOnlySource.includes("ClientPlayNetworking.send")
+	&& !clientOnlySource.includes("villager.getOffers()")
+	&& clientOnlySource.includes("menu.getOffers()")
+	&& compatibilitySource.includes("VillagerNewsSettingsState.activateClientOnly()")
+	&& settingsStateSource.includes("!ServerCompatibilityState.clientOnlyFallback()")
+	&& clientMixinConfiguration.includes("ClientBlockItemMixin")
+	&& existsSync(join(root, "src/main/java/com/vnap/mixin/client/ClientBlockItemMixin.java")),
+"Unsupported servers do not activate an isolated client-only dialogue engine");
+check(!clientSource.includes("ClientOnlyVanillaSoundGate.tick(client)")
+	&& !clientSource.includes("ClientOnlyVanillaSoundGate.clear()")
+	&& clientOnlySoundGateSource.includes("ServerCompatibilityState.clientOnlyFallback()")
+	&& clientOnlySoundGateSource.includes("VillagerNewsSettings.dialogueEnabled()")
+	&& clientOnlySoundGateSource.includes("isCharacterVoice(entity, sound.value())")
+	&& clientOnlySoundGateSource.includes("SoundEvents.VILLAGER_AMBIENT")
+	&& clientOnlySoundGateSource.includes("SoundEvents.WANDERING_TRADER_AMBIENT")
+	&& clientOnlySoundGateSource.includes("SoundEvents.SHEEP_AMBIENT")
+	&& !clientOnlySoundGateSource.includes("DELAY_NANOS")
+	&& !clientOnlySoundGateSource.includes("playSeededSound")
+	&& !soundStateSource.includes("hasActiveOrPending(UUID id)")
+	&& clientPacketListenerMixinSource.includes("ClientOnlyVanillaSoundGate.shouldSuppress")
+	&& clientPacketListenerMixinSource.includes("ClientboundSoundPacket")
+	&& clientPacketListenerMixinSource.includes('method = "handleSoundEvent"')
+	&& clientPacketListenerMixinSource.includes("handleSoundEntityEvent")
+	&& clientOnlySoundGateSource.includes("getEntitiesOfClass(Sheep.class")
+	&& clientMixinConfiguration.includes("ClientPacketListenerMixin"),
+"Client-only dialogue does not suppress vanilla character voices");
 check(animationStateSource.includes("ACTIVE.entrySet().removeIf")
   && soundStateSource.includes("ACTIVE.entrySet().iterator()"), "Expired client dialogue state is not cleaned up");
 check((behaviorSource.match(/tickRateManager\(\)\.runsNormally\(\)/g) ?? []).length >= 2
@@ -358,16 +492,138 @@ check(handbook.overview.length === 12 && handbook.specialVillagers.length === 6
   && handbook.cosmetics.length === 6 && handbook.generalInformation.length === 8,
 "The handbook guide pages do not match the add-on");
 check(handbook.categories.flatMap((category) => category.sections)
-  .find((section) => section.title === "Real-World Days")?.entries.length === 3,
+  .find((section) => section.id === "whrsem")?.entries.length === 3,
 "The handbook is missing the original real-world day guide");
-check(handbookSource.includes("Search Triggers") && handbookSource.includes("DialogueCatalog") === false,
-  "The handbook's searchable trigger browser is missing or using a reduced catalog");
+const handbookTextKeys = [handbook.headline, handbook.guideIntro, handbook.support];
+for (const property of ["overview", "specialVillagers", "cosmetics", "generalInformation", "socials", "settings"]) {
+	for (const entry of handbook[property]) handbookTextKeys.push(entry.title, entry.body);
+}
+for (const entry of Object.values(handbook.contexts)) handbookTextKeys.push(entry.title, entry.browseTitle, entry.body);
+for (const category of handbook.categories) {
+	handbookTextKeys.push(category.title);
+	for (const section of category.sections) {
+		handbookTextKeys.push(section.title);
+		for (const entry of section.entries) handbookTextKeys.push(entry.title, entry.body);
+	}
+}
+check(handbookTextKeys.length === 1634
+	&& new Set(handbookTextKeys).size === handbookTextKeys.length
+	&& handbookTextKeys.every((key) => key.startsWith("handbook.villager-news-addon-port.")
+		&& typeof language[key] === "string" && language[key].length > 0),
+"The handbook does not use a complete set of stable English translation keys");
+const russianHandbookKeys = Object.keys(russianLanguage).filter((key) => key.startsWith("handbook.villager-news-addon-port."));
+const untranslatedRussianHandbookKeys = new Set([
+	"handbook.villager-news-addon-port.socials.0.title",
+	"handbook.villager-news-addon-port.socials.1.title",
+]);
+const formattingCodes = (value) => value.match(/§[0-9a-fklmnor]/giu) ?? [];
+check(russianHandbookKeys.length === 1634
+	&& russianHandbookKeys.every((key) => handbookTextKeys.includes(key))
+	&& handbookTextKeys.every((key) => typeof russianLanguage[key] === "string"
+		&& russianLanguage[key].trim().length > 0
+		&& (russianLanguage[key] !== language[key] || untranslatedRussianHandbookKeys.has(key))
+		&& (russianLanguage[key].match(/\n/g) ?? []).length === (language[key].match(/\n/g) ?? []).length
+		&& JSON.stringify(formattingCodes(russianLanguage[key])) === JSON.stringify(formattingCodes(language[key])))
+	&& handbookTextKeys.filter((key) => /[А-Яа-яЁё]/u.test(russianLanguage[key])).length === 1632,
+"The Russian handbook translation is incomplete or has damaged formatting");
+check(Object.entries(russianLanguage)
+	.filter(([key]) => key.startsWith("handbook.villager-news-addon-port.context.") && key.endsWith(".body"))
+	.every(([, value]) => /^§eУсловие\n\n§7.+\n\n§eРеакция\n\n§7.+$/su.test(value))
+	&& !russianHandbookKeys.some((key) => /(?:[\uE000-\uF8FF]|Villager #[59]|Testificate Man|\bWooly\b|§eTrigger|§eReaction)/u.test(russianLanguage[key])),
+"The Russian trigger guide contains untranslated text, damaged markers, or inconsistent structure");
+const subtitlePrefix = "subtitles.villager-news-addon-port.dialogue.";
+const englishSubtitleKeys = Object.keys(language).filter((key) => key.startsWith(subtitlePrefix));
+const russianSubtitleKeys = Object.keys(russianLanguage).filter((key) => key.startsWith(subtitlePrefix));
+const translatedRussianSubtitleGroupIds = groups.map(([id]) => id);
+const translatedRussianSubtitleGroupIdSet = new Set(translatedRussianSubtitleGroupIds);
+const expectedRussianSubtitleKeys = englishSubtitleKeys.filter((key) => translatedRussianSubtitleGroupIdSet.has(key.split(".")[3]));
+const allowedLatinRussianSubtitleKeys = new Set([
+	"subtitles.villager-news-addon-port.dialogue.armupg.0.1",
+	"subtitles.villager-news-addon-port.dialogue.lvigit.18.1",
+	"subtitles.villager-news-addon-port.dialogue.adhvqz.2.2",
+]);
+const allowedUnchangedRussianSubtitleKeys = new Set([
+	"subtitles.villager-news-addon-port.dialogue.lvigit.18.1",
+	"subtitles.villager-news-addon-port.dialogue.fzoqwd.2.1",
+]);
+const englishSubtitleCountsByGroup = new Map();
+const russianSubtitleCountsByGroup = new Map();
+for (const key of englishSubtitleKeys) {
+	const id = key.split(".")[3];
+	englishSubtitleCountsByGroup.set(id, (englishSubtitleCountsByGroup.get(id) ?? 0) + 1);
+}
+for (const key of russianSubtitleKeys) {
+	const id = key.split(".")[3];
+	russianSubtitleCountsByGroup.set(id, (russianSubtitleCountsByGroup.get(id) ?? 0) + 1);
+}
+check(translatedRussianSubtitleGroupIds.at(-1) === "bygaxwmwtiaf"
+	&& expectedRussianSubtitleKeys.length === 3741
+	&& russianSubtitleKeys.length === expectedRussianSubtitleKeys.length
+	&& expectedRussianSubtitleKeys.every((key) => Object.hasOwn(russianLanguage, key))
+	&& russianSubtitleKeys.every((key) => Object.hasOwn(language, key))
+	&& [...russianSubtitleCountsByGroup].every(([id, count]) => count === englishSubtitleCountsByGroup.get(id)),
+"The completed Russian subtitle batches are incomplete or cross a dialogue-group boundary");
+check(russianSubtitleKeys.every((key) => typeof russianLanguage[key] === "string"
+		&& russianLanguage[key].trim().length > 0
+		&& !/^[,;]/u.test(russianLanguage[key])
+		&& !/[\uE000-\uF8FF]/u.test(russianLanguage[key])
+		&& (!/[A-Za-z]/u.test(russianLanguage[key]) || allowedLatinRussianSubtitleKeys.has(key))
+		&& (russianLanguage[key] !== language[key] || allowedUnchangedRussianSubtitleKeys.has(key)))
+	&& russianLanguage["subtitles.villager-news-addon-port.dialogue.xfpjxq.0.1"] === "Тестификат-мэне?"
+	&& russianLanguage["subtitles.villager-news-addon-port.dialogue.lvigit.18.1"] === "Villager News!"
+	&& russianLanguage["subtitles.villager-news-addon-port.dialogue.vxycol.2.0"] === "Вулли! Это ты?"
+	&& russianLanguage["subtitles.villager-news-addon-port.dialogue.gcoysc.4.0"] === "Кадавр, кажется?"
+	&& russianLanguage["subtitles.villager-news-addon-port.dialogue.nwlcij.2.0"] === "Скрипун!"
+	&& russianLanguage["subtitles.villager-news-addon-port.dialogue.jicosq.2.0"] === "Тише! Это Хранитель!"
+	&& russianLanguage["subtitles.villager-news-addon-port.dialogue.satsrf.3.0"] === "О нет, визер!"
+	&& russianLanguage["subtitles.villager-news-addon-port.dialogue.rnlher.1.0"] === "Тихоня!"
+	&& russianLanguage["subtitles.villager-news-addon-port.dialogue.tqishj.2.0"] === "Эй, нюхач!"
+	&& russianLanguage["subtitles.villager-news-addon-port.dialogue.ididel.2.1"] === "Нижний мир? Нарочно?"
+	&& russianLanguage["subtitles.villager-news-addon-port.dialogue.lxvofx.0.0"] === "Счастливый гаст!"
+	&& russianLanguage["subtitles.villager-news-addon-port.dialogue.rdugrl.2.1"] === "Тестификат-мэном?!"
+	&& russianLanguage["subtitles.villager-news-addon-port.dialogue.xccwah.0.2"] === "в деревне. Передаём Жителю №9..."
+	&& russianLanguage["subtitles.villager-news-addon-port.dialogue.adhvqz.2.2"] === "Villager News гордится тобой!"
+	&& russianLanguage["subtitles.villager-news-addon-port.dialogue.bygaxwmwtiaf.0.2"] === "*Хрмр*",
+"The completed Russian subtitle batches contain untranslated text, damaged markers, or inconsistent terminology");
+const baseLanguageKeys = Object.keys(language).filter((key) => !key.startsWith("handbook.")
+	&& !key.startsWith("subtitles."));
+const placeholders = (value) => value.match(/%(?:\d+\$)?[sdf]/g) ?? [];
+check(baseLanguageKeys.length === 68
+	&& baseLanguageKeys.every((key) => typeof russianLanguage[key] === "string"
+		&& russianLanguage[key].trim().length > 0
+		&& JSON.stringify(placeholders(russianLanguage[key])) === JSON.stringify(placeholders(language[key])))
+	&& Object.keys(russianLanguage).every((key) => Object.hasOwn(language, key))
+	&& Object.values(russianLanguage).filter((value) => /[А-Яа-яЁё]/u.test(value)).length >= 54,
+"The basic Russian item, guide, settings, and screen localization is incomplete");
+check(russianLanguage["guide.villager-news-addon-port.specials"].includes("Mayor Villager")
+	&& russianLanguage["guide.villager-news-addon-port.specials"].includes("Testificate Man")
+	&& russianLanguage["guide.villager-news-addon-port.specials"].includes("Villager Unreachable")
+	&& russianLanguage["guide.villager-news-addon-port.specials"].includes("Wooly The Sheep"),
+"The Russian guide does not preserve the exact special-character activation names");
+check(handbookSource.includes("screen.villager-news-addon-port.search.placeholder")
+	&& handbookSource.includes("I18n.get(key)")
+	&& handbookSource.includes("DialogueCatalog") === false
+	&& !handbookSource.includes("Search Triggers"),
+"The handbook's localized searchable trigger browser is missing or using a reduced catalog");
+check(generatorSource.includes('import { localizeHandbook } from "./sync-handbook-language.mjs"')
+	&& generatorSource.includes("localizeHandbook(handbook, javaLanguage, modNamespace)")
+	&& handbookLocalizationSource.includes("export function localizeHandbook")
+	&& handbookLocalizationSource.includes("if (key.startsWith(prefix)) delete language[key]"),
+"Regenerating the port does not preserve the handbook localization architecture");
 check(clientSource.includes("new HandbookScreen()"), "Using the handbook does not open its client screen");
 check(clientSource.includes("if (!level.isClientSide()) return InteractionResult.PASS;"), "The handbook opener can run on the integrated server thread");
 check(handbookSource.includes("VillagerNewsSettingsState.setChattiness")
   && handbookSource.includes("VillagerNewsSettingsState.setRareVoicelines")
   && handbookSource.includes("VillagerNewsSettingsState.setSpawnSpecialVillagers")
-  && handbookSource.includes("showSubtitles().set"), "The handbook settings are not interactive");
+  && handbookSource.includes("VillagerNewsClientSettings.setSubtitlesEnabled"), "The handbook settings are not interactive");
+check(handbookSource.includes("spawnSpecialVillagers.active = canEdit && !localSettings")
+  && handbookSource.includes("spawnSpecialVillagers.setTooltip(Tooltip.create(Component.translatable(")
+  && settingsStateSource.includes("if (!canEdit || localSettings) return;")
+  && language["screen.villager-news-addon-port.settings.spawn_special_villagers.server_only"] === "Server-side only"
+  && russianLanguage["screen.villager-news-addon-port.settings.spawn_special_villagers.server_only"] === "Только на сервере"
+  && russianLanguage["screen.villager-news-addon-port.settings.spawn_special_villagers.server_only.tooltip"]
+    === "Доступно только при установленном моде на сервере.",
+"Client-only settings still expose the server-only special-spawning toggle");
 check(settingsSource.includes("scaleCooldown") && settingsSource.includes("rareVoicelines")
   && settingsSource.includes("spawnSpecialVillagers"), "The Bedrock settings are not persisted on the server");
 check(behaviorSource.includes("VillagerNewsSettings.scaleCooldown")
@@ -375,9 +631,13 @@ check(behaviorSource.includes("VillagerNewsSettings.scaleCooldown")
   && behaviorSource.includes("VillagerNewsSettings.spawnSpecialVillagers"), "The server behavior does not apply every supported setting");
 check(settingsNetworkSource.includes("Permissions.COMMANDS_GAMEMASTER")
   && settingsNetworkSource.includes("if (!canEdit(context.player()))")
+  && settingsNetworkSource.includes("sendAll(context.player().level().getServer())")
+  && settingsNetworkSource.includes("server.getPlayerList().getPlayers()")
   && settingsPayloadSource.includes("boolean canEdit")
   && settingsStateSource.includes("if (!canEdit) return")
-  && handbookSource.includes("require operator permission"), "Handbook server settings are not permission protected");
+	&& handbookSource.includes("screen.villager-news-addon-port.settings.scope.permission")
+	&& language["screen.villager-news-addon-port.settings.scope.permission"] === "Server dialogue settings require operator permission.",
+"Handbook server settings are not permission protected");
 check(buildSource.includes('compileOnly "com.terraformersmc:modmenu:${project.modmenu_version}"')
   && /^modmenu_version=20\.0\.2$/m.test(gradleProperties)
   && fabricMod.entrypoints?.modmenu?.includes("com.vnap.client.VillagerNewsModMenu")
@@ -395,6 +655,15 @@ check(behaviorSource.includes("ServerLifecycleEvents.SERVER_STOPPING")
   && clientSource.includes("DialogueSoundState.clear(client)"), "World shutdown leaves dialogue state active");
 check(villagerDataSource.includes("vnap$keepSpecialTradeOpen") && villagerDataSource.includes("isSpecialTrader"),
   "Special villagers still inherit the vanilla unemployed-villager trade closure");
+check(villagerDataSource.includes('VillagerTradeBackup.load(input).orElse(null)')
+  && villagerDataSource.includes('if (vnap$tradeBackup != null) vnap$tradeBackup.save(output)')
+  && villagerDataSource.includes('ContextualDialogueController.ensureSpecialTrade(villager)')
+  && tradeBackupSource.includes('backup.store("Data", VillagerData.CODEC, data)')
+  && tradeBackupSource.includes('backup.store("Offers", MerchantOffers.CODEC, offers)')
+  && tradeBackupSource.includes('villager.setOffers(offers.copy())')
+  && behaviorSource.includes('state.vnap$setTradeBackup(VillagerTradeBackup.capture(villager, legacySpecialOnlyOffers))')
+  && behaviorSource.includes('backup.restore(villager)'),
+"Special-name conversion does not preserve and restore the villager's original trading state");
 check(villagerDataSource.includes("VillagerNewsSignMessage")
   && villagerDataSource.includes("VillagerNewsSignType")
   && behaviorSource.includes("state.vnap$setSignType(offeredSign)")
@@ -416,16 +685,44 @@ check(!villagerModelSource.includes("villager_news_sign_board_")
   && signLayerSource.includes('"textures/block/" + wood + "_sign.png"')
   && !signLayerSource.includes("textures/entity/signs/")
   && signLayerSource.includes("getPositionerForAttachment(EMFAttachment.Type.VILLAGER)")
-  && signLayerSource.includes("-5.75F / 16.0F")
+  && signLayerSource.includes("poseStack.translate(0.0F, 5.75F / 16.0F, -1.75F / 16.0F)")
+  && !signLayerSource.includes("poseStack.translate(0.0F, -5.75F / 16.0F")
   && villagerModelSource.includes('"villager_item"')
   && existsSync(join(root, "src/main/java/com/vnap/mixin/client/VillagerRendererMixin.java"))
   && existsSync(join(modAssets, "textures", "entity", "sign_text.png")),
 "The original sign board or its 87-message text atlas is missing");
+check(Array.isArray(signMessages)
+  && signMessages.length === 87
+  && signMessages.every((entry, index) => entry.index === index
+    && [entry.en, entry.ru].every((lines) => Array.isArray(lines)
+      && lines.length >= 1 && lines.length <= 4
+      && lines.every((line) => typeof line === "string" && line.trim().length > 0)))
+  && signMessages.every((entry) => entry.ru.some((line) => /[А-Яа-яЁё]/u.test(line))
+    && !entry.ru.some((line) => /[A-Za-z]/u.test(line)))
+  && JSON.stringify(signMessages[23].ru) === JSON.stringify(signMessages[47].ru)
+  && JSON.stringify(signMessages[39].ru) === JSON.stringify(signMessages[52].ru)
+  && signMessages[59].ru.join(" ").includes("←")
+  && signMessages[65].ru.join(" ").includes("→")
+  && signMessages[83].ru.join(" ").includes("←")
+  && signMessages[85].ru.join(" ").includes("→"),
+"The indexed English/Russian sign-message catalog is incomplete or reordered");
+const russianSignAtlas = readFileSync(join(modAssets, "textures", "entity", "sign_text_ru_ru.png"));
+check(russianSignAtlas.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
+  && russianSignAtlas.readUInt32BE(16) === 96
+  && russianSignAtlas.readUInt32BE(20) === 87 * 35
+  && signLayerSource.includes('"ru_ru".equals(Minecraft.getInstance().getLanguageManager().getSelected())')
+  && signLayerSource.includes("? TEXT_TEXTURE_RU_RU : TEXT_TEXTURE")
+  && behaviorSource.includes('Component.translatable("message.villager-news-addon-port.sign_message", message + 1, 87)')
+  && language["message.villager-news-addon-port.sign_message"] === "Sign message %s / %s"
+  && russianLanguage["message.villager-news-addon-port.sign_message"] === "Надпись таблички %s / %s",
+"The Russian sign atlas, locale selection, or message overlay is missing");
 check(/"villager_item":\s*\[\s*0,\s*0,\s*0\s*\]/.test(villagerModelSource)
   && villagerModelSource.includes('.visible": "vnap_has_nose==1"'),
 "Held items or sheared noses retain the wrong model visibility transform");
 check(mixinConfiguration.includes("VillagerSoundMixin")
-  && existsSync(join(root, "src/main/java/com/vnap/mixin/VillagerSoundMixin.java")),
+	&& mixinConfiguration.includes("WanderingTraderSoundMixin")
+	&& existsSync(join(root, "src/main/java/com/vnap/mixin/VillagerSoundMixin.java"))
+	&& existsSync(join(root, "src/main/java/com/vnap/mixin/WanderingTraderSoundMixin.java")),
 "Vanilla villager death sounds are not deterministically suppressed");
 check(professionLayerSource.includes("vnap$alignAdultClothingWithEmfModel")
   && professionLayerSource.includes("return layer.getParentModel()"),
@@ -453,8 +750,10 @@ for (const [profession, texture] of Object.entries(professionTextures)) {
   check(existsSync(join(resources, "assets", "minecraft", "textures", "entity", "villager", "profession", `${profession}.png`)),
     `${profession} profession texture was not generated`);
 }
-check(/^version=1\.3\.2$/m.test(gradleProperties), "The project version is not 1.3.2");
-check(language["guide.villager-news-addon-port.header"] === "Villager News 1.3.2", "The handbook version is not 1.3.2");
+const projectVersion = gradleProperties.match(/^version=(.+)$/m)?.[1]?.trim();
+check(projectVersion, "The project version is missing from gradle.properties");
+check(language["guide.villager-news-addon-port.header"] === `Villager News ${projectVersion}`,
+  `The handbook version does not match project version ${projectVersion}`);
 const merchantCheck = behaviorSource.indexOf("player.containerMenu instanceof MerchantMenu");
 const openingDialogue = behaviorSource.indexOf("trade_open:");
 check(merchantCheck >= 0 && openingDialogue > merchantCheck, "Trade opening dialogue still runs before the merchant menu opens");
@@ -490,39 +789,6 @@ for (const file of readdirSync(join(modAssets, "sounds", "voice")).filter((name)
     offset += 27 + segmentCount + bodySize;
   }
 }
-const heldGeometry = {
-  handbook: { elementCount: 12, textureSize: [19, 12], geometry: "geometry.oreville_vn.-1897072036", texture: "eaz" },
-  microphone: { elementCount: 2, textureSize: [16, 16], geometry: "geometry.oreville_vn.96833500", texture: "ebb" },
-};
-const heldContexts = new Set([
-  "thirdperson_righthand",
-  "thirdperson_lefthand",
-  "firstperson_righthand",
-  "firstperson_lefthand",
-]);
-for (const [item, expected] of Object.entries(heldGeometry)) {
-  const definition = JSON.parse(readFileSync(join(modAssets, "items", item + ".json"), "utf8"));
-  const held = JSON.parse(readFileSync(join(modAssets, "models", "item", item + "_held.json"), "utf8"));
-  const textureFile = join(modAssets, "textures", "item", "held", item + ".png");
-  const contexts = new Set(definition.model?.cases?.map((entry) => entry.when));
-  check(definition.model?.type === "minecraft:select"
-    && definition.model?.property === "minecraft:display_context"
-    && [...heldContexts].every((context) => contexts.has(context)),
-  item + " does not use its original 3D model in every hand context");
-  check(definition.model?.fallback?.model === "villager-news-addon-port:item/" + item,
-    item + " does not preserve its inventory model");
-  check(held.elements?.length === expected.elementCount
-    && held.elements.every((element) => element.from?.length === 3 && element.to?.length === 3
-      && Object.keys(element.faces ?? {}).length > 0),
-  item + " has incomplete held geometry");
-  check(existsSync(textureFile), item + " is missing its original held texture");
-  const texture = readFileSync(textureFile);
-  check(texture.readUInt32BE(16) === expected.textureSize[0]
-    && texture.readUInt32BE(20) === expected.textureSize[1], item + " held texture has the wrong dimensions");
-  check(generatorSource.includes(expected.geometry) && generatorSource.includes('texture: "' + expected.texture + '"'),
-    item + " held model is not reproducible from the original attachable");
-}
-
 const wearableGeometry = {
   mayor_hat: { elementCount: 8, from: [2.4, 14.4, 2.4], to: [13.6, 16, 13.6], textureSize: [32, 32] },
   moustache: { elementCount: 1, from: [4.8, 4, 0.4], to: [11.2, 5.6, 0.8], textureSize: [16, 16] },
@@ -681,23 +947,13 @@ check(readFileSync(join(resources, "assets", "minecraft", "textures", "entity", 
   .equals(readFileSync(join(modAssets, "textures", "entity", "dkn.png"))),
 "Baby villager is not using the original add-on's dedicated baby face texture");
 
-for (const event of ["ambient", "hurt", "death", "trade", "no"]) {
-  const properties = readFileSync(join(resources, "assets", "minecraft", "esf", "entity", "villager", `${event}.properties`), "utf8");
-  check(properties.includes("sounds.1=2") && !properties.includes("baby.1=false"),
-    `Baby villagers are not covered by the ${event} vanilla-sound replacement`);
-}
-for (const event of ["ambient", "hurt", "death", "trade", "no", "yes"]) {
-  const eventRoot = join(resources, "assets", "minecraft", "esf", "entity", "wandering_trader");
-  const properties = readFileSync(join(eventRoot, `${event}.properties`), "utf8");
-  const replacement = JSON.parse(readFileSync(join(eventRoot, `${event}2.json`), "utf8"));
-  check(properties.includes("sounds.1=2") && replacement.sounds?.[0]?.name === "villager-news-addon-port:silence",
-    `The Wandering Trader's ${event} vanilla sound is not replaced`);
-}
-for (const event of ["ambient", "hurt", "death"]) {
-  const properties = readFileSync(join(resources, "assets", "minecraft", "esf", "entity", "sheep", `${event}.properties`), "utf8");
-  check(properties.includes("sounds.1=2") && properties.includes("name.1=iregex:(Wooly|Wooly The Sheep)"),
-    `Wooly's ${event} vanilla sound is not selectively replaced`);
-}
+check(!fabricMod.depends?.entity_sound_features
+  && !buildSource.includes("IMuO8COj")
+  && !JSON.stringify(sounds).includes("silence")
+  && !existsSync(join(resources, "assets", "minecraft", "esf", "entity", "villager", "ambient.properties"))
+  && !existsSync(join(resources, "assets", "minecraft", "esf", "entity", "wandering_trader", "ambient.properties"))
+  && !existsSync(join(resources, "assets", "minecraft", "esf", "entity", "sheep", "ambient.properties")),
+"Client resources still replace vanilla entity sounds when the server does not have the mod");
 
 {
   const model = JSON.parse(readFileSync(join(cem, "sheep2.jem"), "utf8"));
@@ -788,7 +1044,6 @@ for (const event of ["ambient", "hurt", "death"]) {
     check(woolProperties.includes("models.1=2") && woolProperties.includes("Wooly The Sheep"), `Wooly's ${layer} selector is missing`);
   }
 
-  check(ffmpeg, "FFmpeg is required to verify Wooly's Bedrock alpha-mask conversion");
   const woolyTexture = join(modAssets, "textures", "entity", "diw.png");
   const rgba = execFileSync(ffmpeg, [
     "-hide_banner", "-loglevel", "error", "-i", woolyTexture,
@@ -816,8 +1071,6 @@ for (const target of ["root", "waist", "body", "head", "head_inner", "arms", "le
 for (const file of readdirSync(cem).filter((name) => name.endsWith(".jem"))) {
   JSON.parse(readFileSync(join(cem, file), "utf8"));
 }
-
-check(gradleProperties.includes("version=1.3.2"), "Mod version is not 1.3.2");
 
 console.log(JSON.stringify({
   dialogueGroups: groups.length,

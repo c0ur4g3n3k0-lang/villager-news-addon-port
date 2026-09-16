@@ -12,6 +12,7 @@ import {
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
+import { localizeHandbook } from "./sync-handbook-language.mjs";
 
 const require = createRequire(import.meta.url);
 const ts = require("typescript");
@@ -114,9 +115,6 @@ function cleanGeneratedDirectory(directory) {
   rmSync(resolved, { recursive: true, force: true });
   mkdirSync(resolved, { recursive: true });
 }
-
-const preservedSilence = existsSync(join(modAssets, "sounds", "silence.ogg"))
-  ? readFileSync(join(modAssets, "sounds", "silence.ogg")) : undefined;
 
 for (const generated of [
   join(modAssets, "textures", "entity"),
@@ -975,11 +973,17 @@ for (const layer of ["sheep_wool_undercoat", "sheep_wool"]) {
 }
 
 const textureSource = join(resourceRoot, "textures", "oreville", "vn");
-const ffmpegCandidates = [
-  process.env.FFMPEG_PATH,
-  "C:\\Users\\marcy\\Downloads\\LiSA-win32-x64-2.1.0\\resources\\resources\\lisa\\_internal\\ffmpeg.exe",
-].filter(Boolean);
-const ffmpeg = ffmpegCandidates.find(existsSync);
+function executableAvailable(executable) {
+  if (!executable) return false;
+  try {
+    execFileSync(executable, ["-version"], { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const ffmpeg = [process.env.FFMPEG_PATH, "ffmpeg"].find(executableAvailable);
 
 const compositeTextures = {
   mayor: ["dkn", "dkq"],
@@ -996,7 +1000,7 @@ function copyTexture(name, destination) {
   else if (existsSync(tga) && ffmpeg) {
     execFileSync(ffmpeg, ["-y", "-hide_banner", "-loglevel", "error", "-i", tga, destination]);
   } else if (existsSync(tga)) {
-    throw new Error(`Texture ${name}.tga needs FFmpeg. Set FFMPEG_PATH to an FFmpeg executable.`);
+    throw new Error(`Texture ${name}.tga needs FFmpeg. Add it to PATH or set FFMPEG_PATH to its executable.`);
   } else throw new Error(`Missing texture ${name}`);
 }
 
@@ -1010,31 +1014,6 @@ for (const [item, texture] of Object.entries({
 })) {
   copyTexture(texture, join(modAssets, "textures", "item", `${item}.png`));
 }
-
-const heldItems = {
-  handbook: {
-    geometry: "geometry.oreville_vn.-1897072036",
-    texture: "eaz",
-    center: [0, 0, 0],
-    display: {
-      thirdperson_righthand: { rotation: [-75, 0, 0], translation: [0, 3, 1], scale: [0.55, 0.55, 0.55] },
-      thirdperson_lefthand: { rotation: [-75, 0, 0], translation: [0, 3, 1], scale: [0.55, 0.55, 0.55] },
-      firstperson_righthand: { rotation: [90, 0, 180], translation: [0, 4, 1.13], scale: [0.68, 0.68, 0.68] },
-      firstperson_lefthand: { rotation: [90, 0, 180], translation: [0, 4, 1.13], scale: [0.68, 0.68, 0.68] },
-    },
-  },
-  microphone: {
-    geometry: "geometry.oreville_vn.96833500",
-    texture: "ebb",
-    center: [0, 5, 0],
-    display: {
-      thirdperson_righthand: { rotation: [0, -90, -125], translation: [0, 4, 0.5], scale: [0.85, 0.85, 0.85] },
-      thirdperson_lefthand: { rotation: [0, 90, 125], translation: [0, 4, 0.5], scale: [0.85, 0.85, 0.85] },
-      firstperson_righthand: { rotation: [0, -90, 25], translation: [1.13, 3.2, 1.13], scale: [0.68, 0.68, 0.68] },
-      firstperson_lefthand: { rotation: [0, 90, -25], translation: [1.13, 3.2, 1.13], scale: [0.68, 0.68, 0.68] },
-    },
-  },
-};
 
 const wearableItems = {
   mayor_hat: { geometry: "geometry.oreville_vn.1064568764", texture: "eba", textureSize: [32, 32] },
@@ -1130,7 +1109,7 @@ for (const [item, definition] of Object.entries(wearableItems)) {
   if (originalTextureSize[0] === definition.textureSize[0] && originalTextureSize[1] === definition.textureSize[1]) {
     copyFileSync(sourceTexture, wornTexture);
   } else {
-    if (!ffmpeg) throw new Error(`Padding ${definition.texture}.png needs FFmpeg. Set FFMPEG_PATH to an FFmpeg executable.`);
+    if (!ffmpeg) throw new Error(`Padding ${definition.texture}.png needs FFmpeg. Add it to PATH or set FFMPEG_PATH to its executable.`);
     execFileSync(ffmpeg, [
       "-y", "-hide_banner", "-loglevel", "error", "-i", sourceTexture,
       "-vf", `format=rgba,pad=${definition.textureSize[0]}:${definition.textureSize[1]}:0:0:color=black@0,format=rgba`,
@@ -1166,94 +1145,6 @@ for (const [item, definition] of Object.entries(wearableItems)) {
   });
 }
 
-function heldItemPoint(point, center) {
-  return vector([
-    8 - (point[0] - center[0]),
-    8 + point[1] - center[1],
-    8 + point[2] - center[2],
-  ]);
-}
-
-function heldItemRotation(cube, bone, bonesByName) {
-  const rotations = [];
-  if (cube.rotation?.some(Boolean)) {
-    rotations.push({ rotation: cube.rotation, pivot: cube.pivot ?? bone.pivot ?? [0, 0, 0] });
-  }
-  for (let current = bone; current; current = current.parent ? bonesByName.get(current.parent) : undefined) {
-    if (current.rotation?.some(Boolean)) {
-      rotations.push({ rotation: current.rotation, pivot: current.pivot ?? [0, 0, 0] });
-    }
-  }
-  if (rotations.length > 1) throw new Error("Unsupported nested held-item rotations on " + bone.name);
-  return rotations[0];
-}
-
-function heldItemElement(cube, bone, bonesByName, textureSize, center) {
-  const inflate = cube.inflate ?? 0;
-  const opposite = cube.origin.map((value, index) => value + cube.size[index]);
-  const minimum = cube.origin.map((value, index) => Math.min(value, opposite[index]) - inflate);
-  const maximum = cube.origin.map((value, index) => Math.max(value, opposite[index]) + inflate);
-  const element = {
-    from: heldItemPoint([maximum[0], minimum[1], minimum[2]], center),
-    to: heldItemPoint([minimum[0], maximum[1], maximum[2]], center),
-    faces: wornItemFaces(cube, textureSize),
-  };
-  const transform = heldItemRotation(cube, bone, bonesByName);
-  if (transform) {
-    element.rotation = {
-      origin: heldItemPoint(transform.pivot, center),
-      x: cleanNumber(transform.rotation[0]),
-      y: cleanNumber(transform.rotation[1]),
-      z: cleanNumber(transform.rotation[2]),
-    };
-  }
-  return element;
-}
-
-const handContexts = [
-  "thirdperson_righthand",
-  "thirdperson_lefthand",
-  "firstperson_righthand",
-  "firstperson_lefthand",
-];
-
-for (const [item, definition] of Object.entries(heldItems)) {
-  const geometry = geometryById.get(definition.geometry);
-  if (!geometry) throw new Error("Missing held-item geometry " + definition.geometry);
-  const textureSize = [geometry.description.texture_width, geometry.description.texture_height];
-  const bonesByName = new Map(geometry.bones.map((bone) => [bone.name, bone]));
-  const elements = geometry.bones.flatMap((bone) =>
-    (bone.cubes ?? []).filter((cube) => cube.origin && cube.size && cube.uv)
-      .map((cube) => heldItemElement(cube, bone, bonesByName, textureSize, definition.center)));
-  copyTexture(definition.texture, join(modAssets, "textures", "item", "held", item + ".png"));
-  writeJson(join(modAssets, "models", "item", item + "_held.json"), {
-    ambientocclusion: false,
-    textures: {
-      texture: modNamespace + ":item/held/" + item,
-      particle: modNamespace + ":item/held/" + item,
-    },
-    elements,
-    display: definition.display,
-  });
-  writeJson(join(modAssets, "items", item + ".json"), {
-    model: {
-      type: "minecraft:select",
-      property: "minecraft:display_context",
-      cases: handContexts.map((context) => ({
-        when: context,
-        model: {
-          type: "minecraft:model",
-          model: modNamespace + ":item/" + item + "_held",
-        },
-      })),
-      fallback: {
-        type: "minecraft:model",
-        model: modNamespace + ":item/" + item,
-      },
-    },
-  });
-}
-
 const directlyUsedTextures = new Set(["dtd", "djn", "djh", "dta", "diq", "dix", "diw"]);
 for (const layers of Object.values(compositeTextures)) {
   for (const texture of layers) directlyUsedTextures.add(texture);
@@ -1264,7 +1155,7 @@ for (const texture of directlyUsedTextures) {
 copyTexture("dsx", join(modAssets, "textures", "entity", "sign_text.png"));
 
 function normalizeBinaryAlpha(name) {
-  if (!ffmpeg) throw new Error(`Normalizing ${name}.png needs FFmpeg. Set FFMPEG_PATH to an FFmpeg executable.`);
+  if (!ffmpeg) throw new Error(`Normalizing ${name}.png needs FFmpeg. Add it to PATH or set FFMPEG_PATH to its executable.`);
   const destination = join(modAssets, "textures", "entity", `${name}.png`);
   const temporary = join(modAssets, "textures", "entity", `${name}.opaque.png`);
   try {
@@ -1281,7 +1172,7 @@ function normalizeBinaryAlpha(name) {
 normalizeBinaryAlpha("diw");
 
 function composeTexture(name, layers) {
-  if (!ffmpeg) throw new Error(`Compositing ${name}.png needs FFmpeg. Set FFMPEG_PATH to an FFmpeg executable.`);
+  if (!ffmpeg) throw new Error(`Compositing ${name}.png needs FFmpeg. Add it to PATH or set FFMPEG_PATH to its executable.`);
   const args = ["-y", "-hide_banner", "-loglevel", "error"];
   for (const layer of layers) args.push("-i", join(modAssets, "textures", "entity", `${layer}.png`));
   const filters = [];
@@ -1635,8 +1526,9 @@ for (const [id, group] of dialogueGroups) {
     };
   }
 }
+const localizedHandbook = localizeHandbook(handbook, javaLanguage, modNamespace);
 writeJson(join(modAssets, "dialogues.json"), catalog);
-writeJson(join(modAssets, "handbook.json"), handbook);
+writeJson(join(modAssets, "handbook.json"), localizedHandbook);
 writeJson(join(modAssets, "sounds.json"), javaSounds);
 writeJson(javaLanguageFile, javaLanguage);
 
@@ -1857,7 +1749,6 @@ const bakedGestures = gestureNames.map((gestureName) => ({
 	...bakeAnimationLayers([gestureName, ...(gestureCompanions[gestureName] ?? [])]),
 }));
 const locomotionAnimation = bakeAnimationLayers(["move"]);
-const runLocomotionAnimation = bakeAnimationLayers(["xjouii"]);
 const idleAnimations = ["unjyad", "supuhq", "qvpghh", "edhave", "kvjhyc", "igrbri"]
 	.map((name) => ({ name, ...bakeAnimationLayers([name]) }));
 
@@ -1875,55 +1766,8 @@ writeJson(join(modAssets, "dialogue_animations.json"), {
 	groups: dialogueAnimationData,
 	gestures: bakedGestures,
 	locomotion: locomotionAnimation,
-	runLocomotion: runLocomotionAnimation,
 	idles: idleAnimations,
 });
-
-const silenceFile = join(modAssets, "sounds", "silence.ogg");
-if (preservedSilence) {
-  writeFileSync(silenceFile, preservedSilence);
-} else {
-  if (!ffmpeg) throw new Error("FFmpeg is required to generate the ESF silence clip.");
-  execFileSync(ffmpeg, [
-    "-y", "-hide_banner", "-loglevel", "error",
-    "-f", "lavfi", "-i", "anullsrc=r=44100:cl=mono",
-    "-t", "0.1", "-c:a", "libvorbis", silenceFile,
-  ]);
-}
-
-for (const event of ["ambient", "hurt", "death", "trade", "no"]) {
-  const eventRoot = join(minecraftAssets, "esf", "entity", "villager");
-  writeJson(join(eventRoot, `${event}2.json`), {
-    sounds: [{ name: `${modNamespace}:silence`, volume: 0.01, weight: 1 }],
-  });
-  writeText(join(eventRoot, `${event}.properties`), [
-    "sounds.1=2",
-    "",
-  ].join("\n"));
-}
-
-for (const event of ["ambient", "hurt", "death", "trade", "no", "yes"]) {
-  const eventRoot = join(minecraftAssets, "esf", "entity", "wandering_trader");
-  writeJson(join(eventRoot, `${event}2.json`), {
-    sounds: [{ name: `${modNamespace}:silence`, volume: 0.01, weight: 1 }],
-  });
-  writeText(join(eventRoot, `${event}.properties`), [
-    "sounds.1=2",
-    "",
-  ].join("\n"));
-}
-
-for (const event of ["ambient", "hurt", "death"]) {
-  const eventRoot = join(minecraftAssets, "esf", "entity", "sheep");
-  writeJson(join(eventRoot, `${event}2.json`), {
-    sounds: [{ name: `${modNamespace}:silence`, volume: 0.01, weight: 1 }],
-  });
-  writeText(join(eventRoot, `${event}.properties`), [
-    "sounds.1=2",
-    "name.1=iregex:(Wooly|Wooly The Sheep)",
-    "",
-  ].join("\n"));
-}
 
 const originalIcon = join(resourceRoot, "pack_icon.png");
 if (existsSync(originalIcon)) copyFileSync(originalIcon, join(modAssets, "icon.png"));

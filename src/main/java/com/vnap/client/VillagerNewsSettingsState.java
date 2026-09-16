@@ -24,7 +24,11 @@ public final class VillagerNewsSettingsState {
 	}
 
 	public static void prepareConfigScreen() {
-		if (Minecraft.getInstance().getConnection() != null) return;
+		if (Minecraft.getInstance().getConnection() != null && !ServerCompatibilityState.clientOnlyFallback()) return;
+		activateClientOnly();
+	}
+
+	public static void activateClientOnly() {
 		chattiness = VillagerNewsSettings.chattiness();
 		rareVoicelines = VillagerNewsSettings.rareVoicelines();
 		spawnSpecialVillagers = VillagerNewsSettings.spawnSpecialVillagers();
@@ -65,7 +69,7 @@ public final class VillagerNewsSettingsState {
 	}
 
 	public static void setSpawnSpecialVillagers(boolean value) {
-		if (!canEdit) return;
+		if (!canEdit || localSettings) return;
 		spawnSpecialVillagers = value;
 		send();
 	}

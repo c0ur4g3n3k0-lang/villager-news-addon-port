@@ -2,14 +2,16 @@ package com.vnap.mixin;
 
 import com.vnap.dialogue.ContextualDialogueController;
 import com.vnap.entity.VillagerNewsData;
+import com.vnap.entity.VillagerTradeBackup;
 import net.minecraft.network.syncher.EntityDataAccessor;
 import net.minecraft.network.syncher.EntityDataSerializers;
 import net.minecraft.network.syncher.SynchedEntityData;
+import net.minecraft.world.entity.EntityDimensions;
+import net.minecraft.world.entity.Pose;
 import net.minecraft.world.entity.npc.villager.Villager;
 import net.minecraft.world.entity.npc.villager.VillagerData;
 import net.minecraft.world.entity.npc.villager.VillagerProfession;
 import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.item.trading.MerchantOffers;
 import net.minecraft.world.level.storage.ValueInput;
 import net.minecraft.world.level.storage.ValueOutput;
 import org.spongepowered.asm.mixin.Mixin;
@@ -19,9 +21,19 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.ModifyVariable;
 import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 @Mixin(Villager.class)
 public abstract class VillagerDataMixin implements VillagerNewsData {
+	@Unique
+	private VillagerTradeBackup vnap$tradeBackup;
+	@Unique
+	private boolean vnap$readingSaveData;
+	@Unique
+	private boolean vnap$mayorDimensions;
+	// Match Minecraft 26.2's baby-villager dimensions without changing the Mayor's adult age or trades.
+	@Unique
+	private static final EntityDimensions VNAP_MAYOR_DIMENSIONS = EntityDimensions.scalable(0.49F, 0.98F).withEyeHeight(0.63F);
 	@Unique
 	private static final EntityDataAccessor<Boolean> VNAP_HAS_NOSE = SynchedEntityData.defineId(Villager.class, EntityDataSerializers.BOOLEAN);
 	@Unique
@@ -30,10 +42,6 @@ public abstract class VillagerDataMixin implements VillagerNewsData {
 	private static final EntityDataAccessor<Integer> VNAP_SIGN_MESSAGE = SynchedEntityData.defineId(Villager.class, EntityDataSerializers.INT);
 	@Unique
 	private static final EntityDataAccessor<Integer> VNAP_SIGN_TYPE = SynchedEntityData.defineId(Villager.class, EntityDataSerializers.INT);
-	@Unique
-	private VillagerData vnap$originalVillagerData;
-	@Unique
-	private MerchantOffers vnap$originalVillagerOffers;
 
 	@Inject(method = "defineSynchedData", at = @At("TAIL"))
 	private void vnap$defineData(SynchedEntityData.Builder builder, CallbackInfo ci) {
@@ -49,10 +57,12 @@ public abstract class VillagerDataMixin implements VillagerNewsData {
 		output.putInt("VillagerNewsCosmetic", vnap$cosmetic());
 		output.putInt("VillagerNewsSignMessage", vnap$signMessage());
 		output.putInt("VillagerNewsSignType", vnap$signType());
-		if (vnap$originalVillagerData != null && vnap$originalVillagerOffers != null) {
-			output.store("VillagerNewsOriginalData", VillagerData.CODEC, vnap$originalVillagerData);
-			output.store("VillagerNewsOriginalOffers", MerchantOffers.CODEC, vnap$originalVillagerOffers);
-		}
+		if (vnap$tradeBackup != null) vnap$tradeBackup.save(output);
+	}
+
+	@Inject(method = "readAdditionalSaveData", at = @At("HEAD"))
+	private void vnap$beginLoadData(ValueInput input, CallbackInfo ci) {
+		vnap$readingSaveData = true;
 	}
 
 	@Inject(method = "readAdditionalSaveData", at = @At("TAIL"))
@@ -64,11 +74,26 @@ public abstract class VillagerDataMixin implements VillagerNewsData {
 		int equippedSign = ContextualDialogueController.signType(((Villager) (Object) this).getMainHandItem());
 		vnap$setSignType(input.getIntOr("VillagerNewsSignType", equippedSign >= 0 ? equippedSign : signMessage >= 0 ? 0 : -1));
 		if (equippedSign >= 0) ((Villager) (Object) this).setItemSlot(net.minecraft.world.entity.EquipmentSlot.MAINHAND, ItemStack.EMPTY);
-		vnap$originalVillagerData = input.read("VillagerNewsOriginalData", VillagerData.CODEC).orElse(null);
-		vnap$originalVillagerOffers = input.read("VillagerNewsOriginalOffers", MerchantOffers.CODEC).orElse(null);
-		if (vnap$originalVillagerData == null || vnap$originalVillagerOffers == null) {
-			vnap$originalVillagerData = null;
-			vnap$originalVillagerOffers = null;
+		vnap$tradeBackup = VillagerTradeBackup.load(input).orElse(null);
+		vnap$readingSaveData = false;
+	}
+
+	@Inject(method = "tick", at = @At("HEAD"))
+	private void vnap$syncSpecialTrade(CallbackInfo ci) {
+		Villager villager = (Villager) (Object) this;
+		boolean mayor = !villager.isBaby() && ContextualDialogueController.isMayor(villager);
+		if (mayor != vnap$mayorDimensions) {
+			vnap$mayorDimensions = mayor;
+			villager.refreshDimensions();
+		}
+		if (!villager.level().isClientSide()) ContextualDialogueController.ensureSpecialTrade(villager);
+	}
+
+	@Inject(method = "getDefaultDimensions", at = @At("RETURN"), cancellable = true)
+	private void vnap$mayorHitbox(Pose pose, CallbackInfoReturnable<EntityDimensions> cir) {
+		Villager villager = (Villager) (Object) this;
+		if (!villager.isBaby() && ContextualDialogueController.isMayor(villager)) {
+			cir.setReturnValue(VNAP_MAYOR_DIMENSIONS);
 		}
 	}
 
@@ -83,35 +108,24 @@ public abstract class VillagerDataMixin implements VillagerNewsData {
 	@ModifyVariable(method = "setVillagerData", at = @At("HEAD"), argsOnly = true)
 	private VillagerData vnap$preventSpecialProfession(VillagerData value) {
 		Villager villager = (Villager) (Object) this;
+		if (vnap$readingSaveData) return value;
+		if (ContextualDialogueController.isSpecialTrader(villager)
+				&& !villager.level().isClientSide() && vnap$tradeBackup == null) {
+			vnap$tradeBackup = VillagerTradeBackup.capture(villager, false);
+		}
 		return ContextualDialogueController.isSpecialTrader(villager)
 			? value.withProfession(villager.level().registryAccess(), VillagerProfession.NONE).withLevel(1)
 			: value;
 	}
 
 	@Override
-	public boolean vnap$hasOriginalVillagerState() {
-		return vnap$originalVillagerData != null && vnap$originalVillagerOffers != null;
+	public VillagerTradeBackup vnap$tradeBackup() {
+		return vnap$tradeBackup;
 	}
 
 	@Override
-	public void vnap$captureOriginalVillagerState() {
-		if (vnap$hasOriginalVillagerState()) return;
-		Villager villager = (Villager) (Object) this;
-		vnap$originalVillagerData = villager.getVillagerData();
-		vnap$originalVillagerOffers = villager.getOffers().copy();
-	}
-
-	@Override
-	public void vnap$restoreOriginalVillagerState() {
-		if (!vnap$hasOriginalVillagerState()) return;
-		Villager villager = (Villager) (Object) this;
-		VillagerData originalData = vnap$originalVillagerData;
-		MerchantOffers originalOffers = vnap$originalVillagerOffers.copy();
-		vnap$originalVillagerData = null;
-		vnap$originalVillagerOffers = null;
-		villager.setVillagerData(originalData);
-		villager.getOffers().clear();
-		villager.getOffers().addAll(originalOffers);
+	public void vnap$setTradeBackup(VillagerTradeBackup value) {
+		vnap$tradeBackup = value;
 	}
 
 	@Override

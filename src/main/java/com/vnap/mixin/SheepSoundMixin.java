@@ -13,21 +13,23 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 public abstract class SheepSoundMixin {
 	@Inject(method = "getAmbientSound", at = @At("HEAD"), cancellable = true)
 	private void vnap$removeWoolyAmbientSound(CallbackInfoReturnable<SoundEvent> cir) {
-		if (vnap$isWooly()) cir.setReturnValue(SoundEvents.EMPTY);
+		if (vnap$isServerWooly()) cir.setReturnValue(SoundEvents.EMPTY);
 	}
 
 	@Inject(method = "getHurtSound", at = @At("HEAD"), cancellable = true)
 	private void vnap$removeWoolyHurtSound(DamageSource source, CallbackInfoReturnable<SoundEvent> cir) {
-		if (vnap$isWooly()) cir.setReturnValue(SoundEvents.EMPTY);
+		if (vnap$isServerWooly()) cir.setReturnValue(SoundEvents.EMPTY);
 	}
 
 	@Inject(method = "getDeathSound", at = @At("HEAD"), cancellable = true)
 	private void vnap$removeWoolyDeathSound(CallbackInfoReturnable<SoundEvent> cir) {
-		if (vnap$isWooly()) cir.setReturnValue(SoundEvents.EMPTY);
+		if (vnap$isServerWooly()) cir.setReturnValue(SoundEvents.EMPTY);
 	}
 
-	private boolean vnap$isWooly() {
-		String name = ((Sheep) (Object) this).getName().getString();
+	private boolean vnap$isServerWooly() {
+		Sheep sheep = (Sheep) (Object) this;
+		if (sheep.level().isClientSide()) return false;
+		String name = sheep.getName().getString();
 		return name.equalsIgnoreCase("Wooly") || name.equalsIgnoreCase("Wooly The Sheep");
 	}
 }

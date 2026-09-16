@@ -1,18 +1,13 @@
 package com.vnap.client;
 
-import com.vnap.VillagerNewsAddonPort;
 import com.vnap.dialogue.DialogueCatalog;
 import com.vnap.network.DialogueAnimationPayload;
-import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
-import net.fabricmc.fabric.api.client.rendering.v1.hud.VanillaHudElements;
-import net.minecraft.ChatFormatting;
-import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.network.chat.Component;
-import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.animal.sheep.Sheep;
 import net.minecraft.world.entity.npc.villager.Villager;
+import net.minecraft.world.phys.Vec3;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -25,18 +20,9 @@ import java.util.UUID;
 public final class DialogueSubtitleState {
 	private static final double RANGE = 16.0;
 	private static final double RANGE_SQUARED = RANGE * RANGE;
-	private static final int MAX_LINES = 4;
 	private static final Map<UUID, ActiveSubtitle> ACTIVE = new HashMap<>();
 
 	private DialogueSubtitleState() {
-	}
-
-	public static void register() {
-		HudElementRegistry.attachElementAfter(
-			VanillaHudElements.OVERLAY_MESSAGE,
-			VillagerNewsAddonPort.id("dialogue_subtitles"),
-			DialogueSubtitleState::render
-		);
 	}
 
 	public static void start(DialogueAnimationPayload payload) {
@@ -49,9 +35,16 @@ public final class DialogueSubtitleState {
 		DialogueCatalog.DialogueVariant variant = group.variants().stream()
 			.filter(candidate -> candidate.index() == payload.variantIndex()).findFirst().orElse(null);
 		if (variant == null || variant.subtitles().isEmpty()) return;
+		Minecraft minecraft = Minecraft.getInstance();
+		Entity speaker = minecraft.level == null ? null : minecraft.level.getEntity(payload.entityId());
 		long startNanos = System.nanoTime();
 		ACTIVE.put(payload.entityId(), new ActiveSubtitle(
-			startNanos, startNanos + payload.durationTicks() * 50_000_000L, variant.subtitles()
+			startNanos,
+			startNanos + payload.durationTicks() * 50_000_000L,
+			variant.subtitles(),
+			isDeathDialogue(payload.groupId()),
+			speaker == null ? null : speaker.position(),
+			speaker == null ? null : speakerName(speaker).copy()
 		));
 	}
 
@@ -64,8 +57,11 @@ public final class DialogueSubtitleState {
 		Iterator<Map.Entry<UUID, ActiveSubtitle>> iterator = ACTIVE.entrySet().iterator();
 		while (iterator.hasNext()) {
 			Map.Entry<UUID, ActiveSubtitle> entry = iterator.next();
+			ActiveSubtitle active = entry.getValue();
 			Entity entity = minecraft.level.getEntity(entry.getKey());
-			if (now >= entry.getValue().endNanos() || entity != null && !entity.isAlive()) iterator.remove();
+			if (now >= active.endNanos() || (!active.persistsAfterDeath() && entity != null && !entity.isAlive())) {
+				iterator.remove();
+			}
 		}
 	}
 
@@ -73,76 +69,111 @@ public final class DialogueSubtitleState {
 		ACTIVE.clear();
 	}
 
-	private static void render(GuiGraphicsExtractor graphics, DeltaTracker deltaTracker) {
-		Minecraft minecraft = Minecraft.getInstance();
-		if (minecraft.level == null || minecraft.player == null || !VillagerNewsClientSettings.showSubtitles()) return;
-		long now = System.nanoTime();
+	public static List<VisibleSubtitle> visible(Minecraft minecraft, long now) {
+		if (minecraft.level == null || minecraft.player == null) return List.of();
 		List<VisibleSubtitle> visible = new ArrayList<>();
 		for (Map.Entry<UUID, ActiveSubtitle> entry : ACTIVE.entrySet()) {
 			ActiveSubtitle active = entry.getValue();
 			if (now >= active.endNanos()) continue;
 			Entity entity = minecraft.level.getEntity(entry.getKey());
-			if (entity == null || !entity.isAlive()) continue;
-			double distanceSquared = minecraft.player.distanceToSqr(entity);
+			boolean speakerPresent = entity != null;
+			boolean speakerAlive = speakerPresent && entity.isAlive();
+			boolean useSnapshot = usesSpeakerSnapshot(active.persistsAfterDeath(), speakerPresent, speakerAlive);
+			if (!useSnapshot && !speakerAlive) continue;
+			Vec3 position = useSnapshot ? active.position() : entity.position();
+			Component name = useSnapshot ? active.speakerName() : speakerName(entity);
+			if (position == null || name == null) continue;
+			double distanceSquared = minecraft.player.distanceToSqr(position);
 			if (distanceSquared > RANGE_SQUARED) continue;
 			int frame = active.frame(now);
 			if (frame < 0) continue;
 			Component transcript = Component.translatable(active.subtitles().get(frame).key());
-			visible.add(new VisibleSubtitle(distanceSquared, subtitleLine(entity, transcript)));
+			visible.add(new VisibleSubtitle(
+				distanceSquared,
+				name.copy(),
+				transcript,
+				active.frameStartNanos(frame),
+				active.frameEndNanos(frame)
+			));
 		}
 		visible.sort(Comparator.comparingDouble(VisibleSubtitle::distanceSquared));
-		float y = graphics.guiHeight() - 59.0F;
-		for (int index = 0; index < Math.min(MAX_LINES, visible.size()); index++) {
-			VisibleSubtitle subtitle = visible.get(index);
-			float scale = subtitleScale(index, subtitle.distanceSquared());
-			drawCentered(graphics, minecraft, subtitle.text(), y, scale);
-			y -= minecraft.font.lineHeight + 3.0F;
+		return List.copyOf(visible);
+	}
+
+	static boolean isDeathDialogue(String groupId) {
+		return groupId.equals("hivgme") || groupId.equals("ecslqo");
+	}
+
+	static boolean usesSpeakerSnapshot(boolean persistsAfterDeath, boolean speakerPresent, boolean speakerAlive) {
+		return persistsAfterDeath && (!speakerPresent || !speakerAlive);
+	}
+
+	static int frameAt(List<DialogueCatalog.SubtitleFrame> subtitles, long startNanos, long now) {
+		double elapsed = (now - startNanos) / 1_000_000_000.0;
+		int frame = -1;
+		for (int index = 0; index < subtitles.size(); index++) {
+			if (subtitles.get(index).time() > elapsed) break;
+			frame = index;
 		}
+		return frame;
 	}
 
-	private static Component subtitleLine(Entity entity, Component transcript) {
-		Component name = entity.getName();
-		if (entity instanceof Villager villager && !villager.hasCustomName()) {
-			name = villager.getVillagerData().profession().value().name();
+	static long frameStartNanos(List<DialogueCatalog.SubtitleFrame> subtitles, long startNanos, int frame) {
+		return startNanos + Math.round(subtitles.get(frame).time() * 1_000_000_000.0);
+	}
+
+	static long frameEndNanos(
+		List<DialogueCatalog.SubtitleFrame> subtitles,
+		long startNanos,
+		long endNanos,
+		int frame
+	) {
+		return frame + 1 < subtitles.size()
+			? frameStartNanos(subtitles, startNanos, frame + 1)
+			: endNanos;
+	}
+
+	private static Component speakerName(Entity entity) {
+		Component customName = entity.getCustomName();
+		if (entity instanceof Villager villager) {
+			if (customName == null) return villager.getVillagerData().profession().value().name();
+			String key = SpecialSpeakerNames.villagerKey(customName.getString());
+			if (key != null) return Component.translatable(key);
 		}
-		MutableComponent line = Component.empty();
-		line.append(name.copy().withStyle(ChatFormatting.YELLOW));
-		line.append(Component.literal(": ").withStyle(ChatFormatting.YELLOW));
-		line.append(transcript.copy().withStyle(ChatFormatting.WHITE));
-		return line;
+		if (entity instanceof Sheep && customName != null) {
+			String key = SpecialSpeakerNames.sheepKey(customName.getString());
+			if (key != null) return Component.translatable(key);
+		}
+		return entity.getName();
 	}
 
-	private static float subtitleScale(int index, double distanceSquared) {
-		if (index == 0) return 1.0F;
-		double distance = Math.sqrt(distanceSquared);
-		return (float) Math.max(0.65, Math.min(0.9, 0.95 - distance / RANGE * 0.3));
-	}
-
-	private static void drawCentered(GuiGraphicsExtractor graphics, Minecraft minecraft, Component text, float y, float scale) {
-		int width = minecraft.font.width(text);
-		graphics.pose().pushMatrix();
-		graphics.pose().translate(graphics.guiWidth() / 2.0F, y);
-		graphics.pose().scale(scale, scale);
-		graphics.text(minecraft.font, text, -width / 2, 0, 0xFFFFFFFF, true);
-		graphics.pose().popMatrix();
-	}
-
-	private record VisibleSubtitle(double distanceSquared, Component text) {
+	public record VisibleSubtitle(
+		double distanceSquared,
+		Component speakerName,
+		Component transcript,
+		long frameStartNanos,
+		long frameEndNanos
+	) {
 	}
 
 	private record ActiveSubtitle(
 		long startNanos,
 		long endNanos,
-		List<DialogueCatalog.SubtitleFrame> subtitles
+		List<DialogueCatalog.SubtitleFrame> subtitles,
+		boolean persistsAfterDeath,
+		Vec3 position,
+		Component speakerName
 	) {
 		int frame(long now) {
-			double elapsed = (now - startNanos) / 1_000_000_000.0;
-			int frame = -1;
-			for (int index = 0; index < subtitles.size(); index++) {
-				if (subtitles.get(index).time() > elapsed) break;
-				frame = index;
-			}
-			return frame;
+			return frameAt(subtitles, startNanos, now);
+		}
+
+		long frameStartNanos(int frame) {
+			return DialogueSubtitleState.frameStartNanos(subtitles, startNanos, frame);
+		}
+
+		long frameEndNanos(int frame) {
+			return DialogueSubtitleState.frameEndNanos(subtitles, startNanos, endNanos, frame);
 		}
 	}
 }

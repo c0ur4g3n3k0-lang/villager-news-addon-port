@@ -8,7 +8,9 @@ import net.minecraft.ChatFormatting;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.components.MultiLineTextWidget;
+import net.minecraft.client.gui.components.Tooltip;
 import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.resources.language.I18n;
 import net.minecraft.network.chat.Component;
 
 import java.io.IOException;
@@ -24,7 +26,11 @@ import java.util.Map;
 
 public final class HandbookScreen extends Screen {
 	private static final HandbookData DATA = load();
-	private static final int ROWS = 8;
+	private static final int BUTTON_HEIGHT = 20;
+	private static final int LIST_ROW_STEP = 22;
+	private static final int MENU_ROW_STEP = 24;
+	private static final int FOOTER_Y_OFFSET = 30;
+	private static final int FOOTER_GAP = 6;
 	private final Screen parent;
 	private final boolean settingsOnly;
 	private Page page;
@@ -41,7 +47,7 @@ public final class HandbookScreen extends Screen {
 	}
 
 	private HandbookScreen(Screen parent, Page page, boolean settingsOnly) {
-		super(Component.literal("Villager News"));
+		super(Component.translatable("screen.villager-news-addon-port.title"));
 		this.parent = parent;
 		this.page = page;
 		this.settingsOnly = settingsOnly;
@@ -56,7 +62,7 @@ public final class HandbookScreen extends Screen {
 	protected void init() {
 		int contentWidth = Math.min(380, width - 32);
 		int left = (width - contentWidth) / 2;
-		addText(left, 16, contentWidth, Component.literal(titleForPage()).withStyle(ChatFormatting.YELLOW, ChatFormatting.BOLD), true);
+		addText(left, 16, contentWidth, titleForPage().copy().withStyle(ChatFormatting.YELLOW, ChatFormatting.BOLD), true);
 		switch (page) {
 			case HOME -> buildHome(left, contentWidth);
 			case GUIDE -> buildGuide(left, contentWidth);
@@ -75,33 +81,34 @@ public final class HandbookScreen extends Screen {
 	}
 
 	private void buildHome(int left, int contentWidth) {
-		addText(left, 48, contentWidth, Component.literal(DATA.headline), true);
-		int y = 126;
-		addMenuButton(left, y, contentWidth, "Guide", Page.GUIDE);
-		addMenuButton(left, y + 24, contentWidth, "Settings", Page.SETTINGS);
-		addMenuButton(left, y + 48, contentWidth, "Socials", Page.SOCIALS);
-		addMenuButton(left, y + 72, contentWidth, "Support", Page.SUPPORT);
-		addRenderableWidget(Button.builder(Component.literal("Close"), button -> onClose())
-			.bounds(left, height - 30, contentWidth, 20).build());
+		addText(left, 48, contentWidth, Component.translatable(DATA.headline), true);
+		int y = menuTop(126, 4);
+		addMenuButton(left, y, contentWidth, "screen.villager-news-addon-port.page.guide", Page.GUIDE);
+		addMenuButton(left, y + MENU_ROW_STEP, contentWidth, "screen.villager-news-addon-port.page.settings", Page.SETTINGS);
+		addMenuButton(left, y + MENU_ROW_STEP * 2, contentWidth, "screen.villager-news-addon-port.page.socials", Page.SOCIALS);
+		addMenuButton(left, y + MENU_ROW_STEP * 3, contentWidth, "screen.villager-news-addon-port.page.support", Page.SUPPORT);
+		addRenderableWidget(Button.builder(Component.translatable("screen.villager-news-addon-port.button.close"), button -> onClose())
+			.bounds(left, height - FOOTER_Y_OFFSET, contentWidth, BUTTON_HEIGHT).build());
 	}
 
 	private void buildGuide(int left, int contentWidth) {
-		addText(left, 44, contentWidth, Component.literal(DATA.guideIntro), true);
-		int y = 112;
-		addMenuButton(left, y, contentWidth, "Overview", Page.OVERVIEW);
-		addMenuButton(left, y + 24, contentWidth, "Special Villagers", Page.SPECIALS);
-		addMenuButton(left, y + 48, contentWidth, "Cosmetics", Page.COSMETICS);
-		addMenuButton(left, y + 72, contentWidth, "Triggers & Reactions", Page.TRIGGERS);
+		addText(left, 44, contentWidth, Component.translatable(DATA.guideIntro), true);
+		int y = menuTop(112, 4);
+		addMenuButton(left, y, contentWidth, "screen.villager-news-addon-port.page.overview", Page.OVERVIEW);
+		addMenuButton(left, y + MENU_ROW_STEP, contentWidth, "screen.villager-news-addon-port.page.specials", Page.SPECIALS);
+		addMenuButton(left, y + MENU_ROW_STEP * 2, contentWidth, "screen.villager-news-addon-port.page.cosmetics", Page.COSMETICS);
+		addMenuButton(left, y + MENU_ROW_STEP * 3, contentWidth, "screen.villager-news-addon-port.page.triggers", Page.TRIGGERS);
 		addBackButton(left, contentWidth, Page.HOME);
 	}
 
 	private void buildTriggers(int left, int contentWidth) {
-		EditBox field = new EditBox(font, left, 44, contentWidth - 62, 20, Component.literal("Search Triggers"));
+		Component searchLabel = Component.translatable("screen.villager-news-addon-port.search.placeholder");
+		EditBox field = new EditBox(font, left, 44, contentWidth - 62, 20, searchLabel);
 		field.setValue(search);
 		field.setMaxLength(80);
-		field.setHint(Component.literal("Search Triggers"));
+		field.setHint(searchLabel);
 		addRenderableWidget(field);
-		addRenderableWidget(Button.builder(Component.literal("Go"), button -> {
+		addRenderableWidget(Button.builder(Component.translatable("screen.villager-news-addon-port.button.go"), button -> {
 			search = field.getValue().trim();
 			pageIndex = 0;
 			rebuildWidgets();
@@ -110,55 +117,60 @@ public final class HandbookScreen extends Screen {
 			buildSearchResults(left, contentWidth);
 			return;
 		}
-		addText(left, 70, contentWidth, Component.literal("Browse triggers and reactions by category."), true);
-		addRenderableWidget(Button.builder(Component.literal("General Information"), button -> navigate(Page.GENERAL))
+		addText(left, 70, contentWidth, Component.translatable("screen.villager-news-addon-port.triggers.hint"), true);
+		addRenderableWidget(Button.builder(Component.translatable("screen.villager-news-addon-port.page.general"), button -> navigate(Page.GENERAL))
 			.bounds(left, 94, contentWidth, 20).build());
 		List<Category> categories = DATA.categories;
-		int start = pageIndex * ROWS;
-		for (int index = start; index < Math.min(categories.size(), start + ROWS); index++) {
+		int rows = rowsPerPage(118);
+		int start = pageStart(categories.size(), rows);
+		for (int index = start; index < Math.min(categories.size(), start + rows); index++) {
 			int selected = index;
-			addRenderableWidget(Button.builder(Component.literal(categories.get(index).title), button -> {
+			addRenderableWidget(Button.builder(Component.translatable(categories.get(index).title), button -> {
 				categoryIndex = selected;
 				pageIndex = 0;
 				page = Page.CATEGORY;
 				rebuildWidgets();
-			}).bounds(left, 118 + (index - start) * 22, contentWidth, 20).build());
+			}).bounds(left, 118 + (index - start) * LIST_ROW_STEP, contentWidth, BUTTON_HEIGHT).build());
 		}
-		addPager(left, contentWidth, categories.size(), Page.GUIDE);
+		addPager(left, contentWidth, categories.size(), Page.GUIDE, rows);
 	}
 
 	private void buildSearchResults(int left, int contentWidth) {
 		String query = search.toLowerCase(Locale.ROOT);
 		List<Entry> results = DATA.searchable.stream()
-			.filter(entry -> clean(entry.title).toLowerCase(Locale.ROOT).contains(query)
-				|| clean(entry.body).toLowerCase(Locale.ROOT).contains(query))
-			.sorted(Comparator.comparing(Entry::title, String.CASE_INSENSITIVE_ORDER))
+			.filter(entry -> clean(localized(entry.title)).toLowerCase(Locale.ROOT).contains(query)
+				|| clean(localized(entry.body)).toLowerCase(Locale.ROOT).contains(query))
+			.sorted(Comparator.comparing(entry -> localized(entry.title), String.CASE_INSENSITIVE_ORDER))
 			.toList();
-		addText(left, 70, contentWidth, Component.literal(results.size() + " matching triggers"), true);
-		int start = pageIndex * ROWS;
-		for (int index = start; index < Math.min(results.size(), start + ROWS); index++) {
+		addText(left, 70, contentWidth,
+			Component.translatable("screen.villager-news-addon-port.search.results", results.size()), true);
+		int rows = rowsPerPage(94);
+		int start = pageStart(results.size(), rows);
+		for (int index = start; index < Math.min(results.size(), start + rows); index++) {
 			Entry entry = results.get(index);
-			addRenderableWidget(Button.builder(Component.literal(clean(entry.title)), button -> openDetail(entry, Page.TRIGGERS))
-				.bounds(left, 94 + (index - start) * 22, contentWidth, 20).build());
+			addRenderableWidget(Button.builder(Component.literal(clean(localized(entry.title))), button -> openDetail(entry, Page.TRIGGERS))
+				.bounds(left, 94 + (index - start) * LIST_ROW_STEP, contentWidth, BUTTON_HEIGHT).build());
 		}
-		if (results.isEmpty()) addText(left, 110, contentWidth, Component.literal("No triggers match your search.").withStyle(ChatFormatting.RED), true);
-		addPager(left, contentWidth, results.size(), Page.GUIDE);
+		if (results.isEmpty()) addText(left, 110, contentWidth,
+			Component.translatable("screen.villager-news-addon-port.search.empty").withStyle(ChatFormatting.RED), true);
+		addPager(left, contentWidth, results.size(), Page.GUIDE, rows);
 	}
 
 	private void buildCategory(int left, int contentWidth) {
 		Category category = DATA.categories.get(categoryIndex);
-		addText(left, 44, contentWidth, Component.literal("Choose a section below to browse its triggers."), true);
-		int start = pageIndex * ROWS;
-		for (int index = start; index < Math.min(category.sections.size(), start + ROWS); index++) {
+		addText(left, 44, contentWidth, Component.translatable("screen.villager-news-addon-port.category.hint"), true);
+		int rows = rowsPerPage(72);
+		int start = pageStart(category.sections.size(), rows);
+		for (int index = start; index < Math.min(category.sections.size(), start + rows); index++) {
 			int selected = index;
-			addRenderableWidget(Button.builder(Component.literal(category.sections.get(index).title), button -> {
+			addRenderableWidget(Button.builder(Component.translatable(category.sections.get(index).title), button -> {
 				sectionIndex = selected;
 				pageIndex = 0;
 				page = Page.SECTION;
 				rebuildWidgets();
-			}).bounds(left, 72 + (index - start) * 22, contentWidth, 20).build());
+			}).bounds(left, 72 + (index - start) * LIST_ROW_STEP, contentWidth, BUTTON_HEIGHT).build());
 		}
-		addPager(left, contentWidth, category.sections.size(), Page.TRIGGERS);
+		addPager(left, contentWidth, category.sections.size(), Page.TRIGGERS, rows);
 	}
 
 	private void buildSection(int left, int contentWidth) {
@@ -169,36 +181,38 @@ public final class HandbookScreen extends Screen {
 			if (entry != null && !entry.title.isBlank()) groups.add(entry);
 		}
 		groups.addAll(section.entries);
-		addText(left, 44, contentWidth, Component.literal("Choose a trigger to see how to activate it and what reaction it causes."), true);
-		int start = pageIndex * ROWS;
-		for (int index = start; index < Math.min(groups.size(), start + ROWS); index++) {
+		addText(left, 44, contentWidth, Component.translatable("screen.villager-news-addon-port.section.hint"), true);
+		int rows = rowsPerPage(76);
+		int start = pageStart(groups.size(), rows);
+		for (int index = start; index < Math.min(groups.size(), start + rows); index++) {
 			Entry entry = groups.get(index);
-			addRenderableWidget(Button.builder(Component.literal(clean(entry.title)), button -> openDetail(entry, Page.SECTION))
-				.bounds(left, 76 + (index - start) * 22, contentWidth, 20).build());
+			addRenderableWidget(Button.builder(Component.literal(clean(localized(entry.title))), button -> openDetail(entry, Page.SECTION))
+				.bounds(left, 76 + (index - start) * LIST_ROW_STEP, contentWidth, BUTTON_HEIGHT).build());
 		}
-		if (groups.isEmpty()) addText(left, 100, contentWidth, Component.literal("This section is covered by the general guide entries."), true);
-		addPager(left, contentWidth, groups.size(), Page.CATEGORY);
+		if (groups.isEmpty()) addText(left, 100, contentWidth,
+			Component.translatable("screen.villager-news-addon-port.section.empty"), true);
+		addPager(left, contentWidth, groups.size(), Page.CATEGORY, rows);
 	}
 
 	private void buildDetail(int left, int contentWidth) {
 		if (detail != null) {
-			addText(left, 52, contentWidth, Component.literal(clean(detail.body)), false);
+			addText(left, 52, contentWidth, Component.literal(clean(localized(detail.body))), false);
 		}
 		addBackButton(left, contentWidth, returnPage);
 	}
 
 	private void buildEntryPage(int left, int contentWidth, List<Entry> entries, Page back) {
 		Entry entry = entries.get(Math.max(0, Math.min(entryIndex, entries.size() - 1)));
-		addText(left, 48, contentWidth, Component.literal(clean(entry.title)).withStyle(ChatFormatting.YELLOW, ChatFormatting.BOLD), true);
-		addText(left, 74, contentWidth, Component.literal(clean(entry.body)), false);
+		addText(left, 48, contentWidth, Component.literal(clean(localized(entry.title))).withStyle(ChatFormatting.YELLOW, ChatFormatting.BOLD), true);
+		addText(left, 74, contentWidth, Component.literal(clean(localized(entry.body))), false);
 		int half = (contentWidth - 6) / 2;
-		Button previous = Button.builder(Component.literal("Previous"), button -> {
+		Button previous = Button.builder(Component.translatable("screen.villager-news-addon-port.button.previous"), button -> {
 			entryIndex--;
 			rebuildWidgets();
 		}).bounds(left, height - 54, half, 20).build();
 		previous.active = entryIndex > 0;
 		addRenderableWidget(previous);
-		Button next = Button.builder(Component.literal("Next"), button -> {
+		Button next = Button.builder(Component.translatable("screen.villager-news-addon-port.button.next"), button -> {
 			entryIndex++;
 			rebuildWidgets();
 		}).bounds(left + half + 6, height - 54, half, 20).build();
@@ -208,111 +222,142 @@ public final class HandbookScreen extends Screen {
 	}
 
 	private void buildSupport(int left, int contentWidth) {
-		addText(left, 52, contentWidth, Component.literal(DATA.support), false);
+		addText(left, 52, contentWidth, Component.translatable(DATA.support), false);
 		addBackButton(left, contentWidth, Page.HOME);
 	}
 
 	private void buildSettings(int left, int contentWidth) {
 		boolean canEdit = VillagerNewsSettingsState.canEdit();
-		addText(left, 42, contentWidth, Component.literal(canEdit
-			? VillagerNewsSettingsState.localSettings()
-				? "Dialogue settings are saved for local worlds."
-				: "Dialogue settings are saved by the current server."
-			: "Server dialogue settings require operator permission."), true);
+		boolean localSettings = VillagerNewsSettingsState.localSettings();
+		addText(left, 42, contentWidth, Component.translatable(canEdit
+			? localSettings
+				? "screen.villager-news-addon-port.settings.scope.local"
+				: "screen.villager-news-addon-port.settings.scope.server"
+			: "screen.villager-news-addon-port.settings.scope.permission"), true);
 		int labelWidth = Math.min(166, contentWidth / 2);
 		int buttonLeft = left + labelWidth;
 		int buttonWidth = contentWidth - labelWidth;
 		int y = 66;
-		addText(left, y + 6, labelWidth - 6, Component.literal("Villager News Subtitles"), false);
-		addRenderableWidget(Button.builder(Component.literal(toggleLabel(VillagerNewsClientSettings.showSubtitles())), button -> {
-			boolean enabled = !VillagerNewsClientSettings.showSubtitles();
-			VillagerNewsClientSettings.setShowSubtitles(enabled);
-			button.setMessage(Component.literal(toggleLabel(enabled)));
+		addText(left, y + 6, labelWidth - 6,
+			Component.translatable("settings.villager-news-addon-port.subtitles"), false);
+		addRenderableWidget(Button.builder(toggleComponent(VillagerNewsClientSettings.subtitlesEnabled()), button -> {
+			boolean enabled = !VillagerNewsClientSettings.subtitlesEnabled();
+			VillagerNewsClientSettings.setSubtitlesEnabled(enabled);
+			button.setMessage(toggleComponent(enabled));
 		}).bounds(buttonLeft, y, buttonWidth, 20).build());
 		y += 26;
-		addText(left, y + 6, labelWidth - 6, Component.literal("Villager Chattiness"), false);
-		Button chattiness = Button.builder(Component.literal(chattinessLabel(VillagerNewsSettingsState.chattiness())), button -> {
+		addText(left, y + 6, labelWidth - 6,
+			Component.translatable("screen.villager-news-addon-port.settings.chattiness"), false);
+		Button chattiness = Button.builder(chattinessLabel(VillagerNewsSettingsState.chattiness()), button -> {
 			VillagerNewsSettingsState.setChattiness(VillagerNewsSettingsState.chattiness() + 1);
-			button.setMessage(Component.literal(chattinessLabel(VillagerNewsSettingsState.chattiness())));
+			button.setMessage(chattinessLabel(VillagerNewsSettingsState.chattiness()));
 		}).bounds(buttonLeft, y, buttonWidth, 20).build();
 		chattiness.active = canEdit;
 		addRenderableWidget(chattiness);
 		y += 26;
-		addText(left, y + 6, labelWidth - 6, Component.literal("Rare Voicelines"), false);
-		Button rareVoicelines = Button.builder(Component.literal(rareLabel(VillagerNewsSettingsState.rareVoicelines())), button -> {
+		addText(left, y + 6, labelWidth - 6,
+			Component.translatable("screen.villager-news-addon-port.settings.rare_voicelines"), false);
+		Button rareVoicelines = Button.builder(rareLabel(VillagerNewsSettingsState.rareVoicelines()), button -> {
 			VillagerNewsSettingsState.setRareVoicelines(VillagerNewsSettingsState.rareVoicelines() + 1);
-			button.setMessage(Component.literal(rareLabel(VillagerNewsSettingsState.rareVoicelines())));
+			button.setMessage(rareLabel(VillagerNewsSettingsState.rareVoicelines()));
 		}).bounds(buttonLeft, y, buttonWidth, 20).build();
 		rareVoicelines.active = canEdit;
 		addRenderableWidget(rareVoicelines);
 		y += 26;
-		addText(left, y + 6, labelWidth - 6, Component.literal("Spawn Special Villagers"), false);
-		Button spawnSpecialVillagers = Button.builder(Component.literal(toggleLabel(VillagerNewsSettingsState.spawnSpecialVillagers())), button -> {
+		addText(left, y + 6, labelWidth - 6,
+			Component.translatable("screen.villager-news-addon-port.settings.spawn_special_villagers"), false);
+		Button spawnSpecialVillagers = Button.builder(localSettings
+			? Component.translatable("screen.villager-news-addon-port.settings.spawn_special_villagers.server_only")
+			: toggleComponent(VillagerNewsSettingsState.spawnSpecialVillagers()), button -> {
 			VillagerNewsSettingsState.setSpawnSpecialVillagers(!VillagerNewsSettingsState.spawnSpecialVillagers());
-			button.setMessage(Component.literal(toggleLabel(VillagerNewsSettingsState.spawnSpecialVillagers())));
+			button.setMessage(toggleComponent(VillagerNewsSettingsState.spawnSpecialVillagers()));
 		}).bounds(buttonLeft, y, buttonWidth, 20).build();
-		spawnSpecialVillagers.active = canEdit;
+		spawnSpecialVillagers.active = canEdit && !localSettings;
+		if (localSettings) spawnSpecialVillagers.setTooltip(Tooltip.create(Component.translatable(
+			"screen.villager-news-addon-port.settings.spawn_special_villagers.server_only.tooltip")));
 		addRenderableWidget(spawnSpecialVillagers);
 		y += 26;
-		addText(left, y + 6, labelWidth - 6, Component.literal("Villager Style"), false);
-		Button style = Button.builder(Component.literal("Villager News"), button -> {
+		addText(left, y + 6, labelWidth - 6,
+			Component.translatable("screen.villager-news-addon-port.settings.style"), false);
+		Button style = Button.builder(Component.translatable("screen.villager-news-addon-port.settings.style.villager_news"), button -> {
 		}).bounds(buttonLeft, y, buttonWidth, 20).build();
 		style.active = false;
 		addRenderableWidget(style);
 		if (settingsOnly) {
-			addRenderableWidget(Button.builder(Component.literal("Done"), button -> onClose())
-				.bounds(left, height - 30, contentWidth, 20).build());
+			addRenderableWidget(Button.builder(Component.translatable("screen.villager-news-addon-port.button.done"), button -> onClose())
+				.bounds(left, height - FOOTER_Y_OFFSET, contentWidth, BUTTON_HEIGHT).build());
 		} else addBackButton(left, contentWidth, Page.HOME);
 	}
 
-	private static String toggleLabel(boolean enabled) {
-		return enabled ? "On" : "Off";
+	private static Component toggleComponent(boolean enabled) {
+		return Component.translatable(enabled ? "options.on" : "options.off");
 	}
 
-	private static String chattinessLabel(int value) {
-		return switch (value) {
-			case 0 -> "Muted";
-			case 1 -> "Shy";
-			case 3 -> "Super Chatty";
-			default -> "Chatty";
+	private static Component chattinessLabel(int value) {
+		String key = switch (value) {
+			case 0 -> "muted";
+			case 1 -> "shy";
+			case 3 -> "super_chatty";
+			default -> "chatty";
 		};
+		return Component.translatable("screen.villager-news-addon-port.settings.chattiness." + key);
 	}
 
-	private static String rareLabel(int value) {
-		return switch (value) {
-			case 0 -> "Never";
-			case 2 -> "Often";
-			default -> "Default";
+	private static Component rareLabel(int value) {
+		String key = switch (value) {
+			case 0 -> "never";
+			case 2 -> "often";
+			default -> "default";
 		};
+		return Component.translatable("screen.villager-news-addon-port.settings.rare_voicelines." + key);
 	}
 
-	private void addPager(int left, int contentWidth, int count, Page back) {
-		int pages = Math.max(1, (count + ROWS - 1) / ROWS);
+	private void addPager(int left, int contentWidth, int count, Page back, int rows) {
+		int pages = pageCount(count, rows);
 		int third = (contentWidth - 12) / 3;
-		Button previous = Button.builder(Component.literal("Previous"), button -> {
+		Button previous = Button.builder(Component.translatable("screen.villager-news-addon-port.button.previous"), button -> {
 			pageIndex--;
 			rebuildWidgets();
-		}).bounds(left, height - 30, third, 20).build();
+		}).bounds(left, height - FOOTER_Y_OFFSET, third, BUTTON_HEIGHT).build();
 		previous.active = pageIndex > 0;
 		addRenderableWidget(previous);
-		addRenderableWidget(Button.builder(Component.literal("Back"), button -> navigate(back))
-			.bounds(left + third + 6, height - 30, third, 20).build());
-		Button next = Button.builder(Component.literal("Next"), button -> {
+		addRenderableWidget(Button.builder(Component.translatable("screen.villager-news-addon-port.button.back"), button -> navigate(back))
+			.bounds(left + third + 6, height - FOOTER_Y_OFFSET, third, BUTTON_HEIGHT).build());
+		Button next = Button.builder(Component.translatable("screen.villager-news-addon-port.button.next"), button -> {
 			pageIndex++;
 			rebuildWidgets();
-		}).bounds(left + (third + 6) * 2, height - 30, third, 20).build();
+		}).bounds(left + (third + 6) * 2, height - FOOTER_Y_OFFSET, third, BUTTON_HEIGHT).build();
 		next.active = pageIndex + 1 < pages;
 		addRenderableWidget(next);
 	}
 
-	private void addMenuButton(int left, int y, int contentWidth, String label, Page destination) {
-		addRenderableWidget(Button.builder(Component.literal(label), button -> navigate(destination))
-			.bounds(left, y, contentWidth, 20).build());
+	private int rowsPerPage(int firstRowY) {
+		int spaceForOffsets = height - FOOTER_Y_OFFSET - FOOTER_GAP - BUTTON_HEIGHT - firstRowY;
+		return Math.max(1, Math.floorDiv(spaceForOffsets, LIST_ROW_STEP) + 1);
+	}
+
+	private int pageStart(int count, int rows) {
+		pageIndex = Math.max(0, Math.min(pageIndex, pageCount(count, rows) - 1));
+		return pageIndex * rows;
+	}
+
+	private static int pageCount(int count, int rows) {
+		return Math.max(1, (count + rows - 1) / rows);
+	}
+
+	private int menuTop(int preferredY, int buttonCount) {
+		int latestY = height - FOOTER_Y_OFFSET - FOOTER_GAP - BUTTON_HEIGHT - (buttonCount - 1) * MENU_ROW_STEP;
+		return Math.min(preferredY, latestY);
+	}
+
+	private void addMenuButton(int left, int y, int contentWidth, String labelKey, Page destination) {
+		addRenderableWidget(Button.builder(Component.translatable(labelKey), button -> navigate(destination))
+			.bounds(left, y, contentWidth, BUTTON_HEIGHT).build());
 	}
 
 	private void addBackButton(int left, int contentWidth, Page destination) {
-		addRenderableWidget(Button.builder(Component.literal("Back"), button -> navigate(destination))
-			.bounds(left, height - 30, contentWidth, 20).build());
+		addRenderableWidget(Button.builder(Component.translatable("screen.villager-news-addon-port.button.back"), button -> navigate(destination))
+			.bounds(left, height - FOOTER_Y_OFFSET, contentWidth, BUTTON_HEIGHT).build());
 	}
 
 	private void navigate(Page destination) {
@@ -336,23 +381,23 @@ public final class HandbookScreen extends Screen {
 		return widget;
 	}
 
-	private String titleForPage() {
+	private Component titleForPage() {
 		return switch (page) {
-			case HOME -> "Villager News";
-			case GUIDE -> "Guide";
-			case OVERVIEW -> "Overview";
-			case SPECIALS -> "Special Villagers";
-			case COSMETICS -> "Cosmetics";
-			case GENERAL -> "General Information";
-			case SETTINGS -> "Settings";
-			case SOCIALS -> "Socials";
-			case SUPPORT -> "Support";
-			case TRIGGERS -> "Triggers & Reactions";
-			case CATEGORY -> DATA.categories.get(categoryIndex).title;
-			case SECTION -> DATA.categories.get(categoryIndex).sections.get(sectionIndex).title;
-			case DETAIL -> {
-				yield detail == null ? "Trigger" : clean(detail.title);
-			}
+			case HOME -> Component.translatable("screen.villager-news-addon-port.title");
+			case GUIDE -> Component.translatable("screen.villager-news-addon-port.page.guide");
+			case OVERVIEW -> Component.translatable("screen.villager-news-addon-port.page.overview");
+			case SPECIALS -> Component.translatable("screen.villager-news-addon-port.page.specials");
+			case COSMETICS -> Component.translatable("screen.villager-news-addon-port.page.cosmetics");
+			case GENERAL -> Component.translatable("screen.villager-news-addon-port.page.general");
+			case SETTINGS -> Component.translatable("screen.villager-news-addon-port.page.settings");
+			case SOCIALS -> Component.translatable("screen.villager-news-addon-port.page.socials");
+			case SUPPORT -> Component.translatable("screen.villager-news-addon-port.page.support");
+			case TRIGGERS -> Component.translatable("screen.villager-news-addon-port.page.triggers");
+			case CATEGORY -> Component.translatable(DATA.categories.get(categoryIndex).title);
+			case SECTION -> Component.translatable(DATA.categories.get(categoryIndex).sections.get(sectionIndex).title);
+			case DETAIL -> detail == null
+				? Component.translatable("screen.villager-news-addon-port.page.trigger")
+				: Component.literal(clean(localized(detail.title)));
 		};
 	}
 
@@ -368,6 +413,10 @@ public final class HandbookScreen extends Screen {
 
 	private static String clean(String value) {
 		return value.replace("Â", "").replaceAll("§[0-9a-fk-or]", "");
+	}
+
+	private static String localized(String key) {
+		return I18n.get(key);
 	}
 
 	private static HandbookData load() {

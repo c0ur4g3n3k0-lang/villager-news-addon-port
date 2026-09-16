@@ -13,16 +13,16 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 public abstract class VillagerSoundMixin {
 	@Inject(method = "getAmbientSound", at = @At("HEAD"), cancellable = true)
 	private void vnap$removeVanillaAmbientSound(CallbackInfoReturnable<SoundEvent> cir) {
-		cir.setReturnValue(SoundEvents.EMPTY);
+		if (!((Villager) (Object) this).level().isClientSide()) cir.setReturnValue(SoundEvents.EMPTY);
 	}
 
 	@Inject(method = "getHurtSound", at = @At("HEAD"), cancellable = true)
 	private void vnap$removeVanillaHurtSound(DamageSource source, CallbackInfoReturnable<SoundEvent> cir) {
-		cir.setReturnValue(SoundEvents.EMPTY);
+		if (!((Villager) (Object) this).level().isClientSide()) cir.setReturnValue(SoundEvents.EMPTY);
 	}
 
 	@Inject(method = "getDeathSound", at = @At("HEAD"), cancellable = true)
 	private void vnap$removeVanillaDeathSound(CallbackInfoReturnable<SoundEvent> cir) {
-		cir.setReturnValue(SoundEvents.EMPTY);
+		if (!((Villager) (Object) this).level().isClientSide()) cir.setReturnValue(SoundEvents.EMPTY);
 	}
 }

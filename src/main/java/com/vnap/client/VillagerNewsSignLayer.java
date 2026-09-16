@@ -4,6 +4,7 @@ import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import com.mojang.math.Axis;
 import com.vnap.VillagerNewsAddonPort;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.model.npc.VillagerModel;
 import net.minecraft.client.renderer.SubmitNodeCollector;
 import net.minecraft.client.renderer.entity.RenderLayerParent;
@@ -26,6 +27,9 @@ public final class VillagerNewsSignLayer extends RenderLayer<VillagerRenderState
 	private static final Identifier TEXT_TEXTURE = Identifier.fromNamespaceAndPath(
 		VillagerNewsAddonPort.MOD_ID, "textures/entity/sign_text.png"
 	);
+	private static final Identifier TEXT_TEXTURE_RU_RU = Identifier.fromNamespaceAndPath(
+		VillagerNewsAddonPort.MOD_ID, "textures/entity/sign_text_ru_ru.png"
+	);
 	public VillagerNewsSignLayer(RenderLayerParent<VillagerRenderState, VillagerModel> renderer) {
 		super(renderer);
 	}
@@ -46,11 +50,14 @@ public final class VillagerNewsSignLayer extends RenderLayer<VillagerRenderState
 		} else {
 			positioner.accept(poseStack);
 		}
+		// The folded-arm pivot sits above the chest. Positive model Y places the board below the head.
 		poseStack.translate(0.0F, 5.75F / 16.0F, -1.75F / 16.0F);
 		poseStack.mulPose(Axis.XP.rotationDegrees(42.97F));
 		collector.submitCustomGeometry(poseStack, RenderTypes.entityCutout(BOARD_TEXTURES[type]),
 			(pose, vertices) -> drawBoard(pose, vertices, packedLight));
-		collector.submitCustomGeometry(poseStack, RenderTypes.entityCutout(TEXT_TEXTURE),
+		Identifier textTexture = "ru_ru".equals(Minecraft.getInstance().getLanguageManager().getSelected())
+			? TEXT_TEXTURE_RU_RU : TEXT_TEXTURE;
+		collector.submitCustomGeometry(poseStack, RenderTypes.entityCutout(textTexture),
 			(pose, vertices) -> drawText(pose, vertices, packedLight, message));
 		poseStack.popPose();
 	}

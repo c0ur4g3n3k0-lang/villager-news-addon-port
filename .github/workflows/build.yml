@@ -23,6 +23,12 @@ jobs:
         run: chmod +x ./gradlew
       - name: build
         run: ./gradlew build
+      - name: install ffmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes ffmpeg
+      - name: verify port
+        run: node tools/verify-port.mjs
       - name: capture build artifacts
         uses: actions/upload-artifact@v7
         with:

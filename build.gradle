@@ -3,6 +3,10 @@ plugins {
 	id 'maven-publish'
 }
 
+base {
+	archivesName = "Villager-News-Mod-Port"
+}
+
 repositories {
 	exclusiveContent {
 		forRepository {
@@ -36,7 +40,12 @@ dependencies {
 
 	compileOnly "maven.modrinth:4I1XuqiY:${project.emf_version}"
 	compileOnly "maven.modrinth:BVzZfTc1:${project.etf_version}"
+	localRuntime "maven.modrinth:4I1XuqiY:${project.emf_version}"
+	localRuntime "maven.modrinth:BVzZfTc1:${project.etf_version}"
 	compileOnly "com.terraformersmc:modmenu:${project.modmenu_version}"
+
+	testImplementation "org.junit.jupiter:junit-jupiter:5.14.2"
+	testRuntimeOnly "org.junit.platform:junit-platform-launcher:1.14.2"
 }
 
 processResources {
@@ -56,6 +65,10 @@ processResources {
 
 tasks.withType(JavaCompile).configureEach {
 	it.options.release = 25
+}
+
+tasks.withType(Test).configureEach {
+	useJUnitPlatform()
 }
 
 java {

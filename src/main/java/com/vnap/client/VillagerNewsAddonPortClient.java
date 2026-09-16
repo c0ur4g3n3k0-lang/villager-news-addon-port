@@ -23,6 +23,7 @@ public final class VillagerNewsAddonPortClient implements ClientModInitializer {
 	@Override
 	public void onInitializeClient() {
 		VillagerNewsClientSettings.load();
+		VillagerNewsKeyMappings.register();
 		try {
 			DialogueAnimationState.load();
 			registerFloat("vnap_speaking", DialogueAnimationState::speaking, "Whether the Villager News character is speaking");
@@ -57,13 +58,21 @@ public final class VillagerNewsAddonPortClient implements ClientModInitializer {
 			})
 		);
 		ClientPlayNetworking.registerGlobalReceiver(VillagerNewsSettingsPayload.TYPE, (payload, context) ->
-			context.client().execute(() -> VillagerNewsSettingsState.apply(payload))
+			context.client().execute(() -> {
+				ServerCompatibilityState.markServerModPresent();
+				VillagerNewsSettingsState.apply(payload);
+			})
+		);
+		ClientPlayConnectionEvents.JOIN.register((handler, sender, client) ->
+			client.execute(ServerCompatibilityState::detectServerSupport)
 		);
 		ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> {
+			ClientOnlyDialogueController.clear(client);
 			DialogueSoundState.clear(client);
 			DialogueAnimationState.clear();
 			DialogueSubtitleState.clear();
 			VillagerNewsSettingsState.reset();
+			ServerCompatibilityState.reset();
 		});
 		UseItemCallback.EVENT.register((player, level, hand) -> {
 			if (!level.isClientSide()) return InteractionResult.PASS;
@@ -71,8 +80,11 @@ public final class VillagerNewsAddonPortClient implements ClientModInitializer {
 			Minecraft.getInstance().setScreenAndShow(new HandbookScreen());
 			return InteractionResult.SUCCESS;
 		});
-		DialogueSubtitleState.register();
+		ClientOnlyDialogueController.register();
+		VillagerNewsSubtitleHud.register();
 		ClientTickEvents.END_CLIENT_TICK.register(client -> {
+			VillagerNewsKeyMappings.tick(client);
+			ClientOnlyDialogueController.tick(client);
 			DialogueSoundState.tick(client);
 			DialogueAnimationState.tick(client);
 			DialogueSubtitleState.tick(client);

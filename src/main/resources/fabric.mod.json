@@ -2,8 +2,8 @@
 	"schemaVersion": 1,
 	"id": "villager-news-addon-port",
 	"version": "${version}",
-	"name": "Villager News Addon Port",
-	"description": "A Java Edition port of Villager News with contextual dialogue and EMF, ETF, and ESF models, textures, and sounds.",
+	"name": "Villager News Mod Port",
+	"description": "A Java Edition port of Villager News with contextual dialogue, animated models, textures, and sounds.",
 	"authors": [
 		"Oreville Studios Ltd",
 		"Element Animation",
@@ -36,7 +36,6 @@
 		"java": ">=25",
 		"fabric-api": "*",
 		"entity_model_features": ">=3.3.5",
-		"entity_texture_features": ">=7.2.1",
-		"entity_sound_features": ">=0.8.2"
+		"entity_texture_features": ">=7.2.1"
 	}
 }

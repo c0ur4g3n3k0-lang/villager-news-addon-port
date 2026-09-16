@@ -17,9 +17,7 @@ public interface VillagerNewsData {
 
 	void vnap$setSignType(int value);
 
-	boolean vnap$hasOriginalVillagerState();
+	VillagerTradeBackup vnap$tradeBackup();
 
-	void vnap$captureOriginalVillagerState();
-
-	void vnap$restoreOriginalVillagerState();
+	void vnap$setTradeBackup(VillagerTradeBackup value);
 }
