@@ -6,6 +6,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.resources.sounds.EntityBoundSoundInstance;
 import net.minecraft.client.resources.sounds.SimpleSoundInstance;
 import net.minecraft.client.resources.sounds.SoundInstance;
+import net.minecraft.client.sounds.SoundEngine;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.entity.Entity;
@@ -46,7 +47,8 @@ public final class DialogueSoundState {
 		SoundInstance sound = followsEntity
 			? new EntityBoundSoundInstance(variant.sound(), SoundSource.NEUTRAL, 1.0F, 1.0F, entity, entity.getRandom().nextLong())
 			: new SimpleSoundInstance(variant.sound(), SoundSource.NEUTRAL, 1.0F, 1.0F, RandomSource.create(), entity.getX(), entity.getY(), entity.getZ());
-		minecraft.getSoundManager().play(sound);
+		SoundEngine.PlayResult result = minecraft.getSoundManager().play(sound);
+		if (result == SoundEngine.PlayResult.NOT_STARTED) return true;
 		ACTIVE.put(payload.entityId(), new ActiveSound(sound, followsEntity, System.nanoTime() + payload.durationTicks() * 50_000_000L));
 		return true;
 	}

@@ -5,8 +5,8 @@ It brings the original Villager News characters, models, animations, textures,
 voice acting, and contextual dialogue to Java Edition while retaining normal
 Minecraft villager gameplay.
 
-Current release candidate: **1.4.1-rc.2**. The installable file is
-`Villager-News-Mod-Port-1.4.1-rc.2.jar`; the `-sources.jar` file is for developers,
+Current release candidate: **1.4.1-rc.3**. The installable file is
+`Villager-News-Mod-Port-1.4.1-rc.3.jar`; the `-sources.jar` file is for developers,
 not for the Minecraft `mods` folder.
 
 ## Community
@@ -25,8 +25,11 @@ Other version and discussion: [Villager News Addon Port Discord server](https://
   long lines wrap within the game window
 - Context-aware dialogue for player actions, nearby mobs, weather, dimensions,
   combat, trading, work, sleep, spawning, growth, and other world events
+- Ongoing poison, fire, lava, freezing, suffocation, and effect reactions with recovery lines
+- Delayed wake-up responses and village-wide bell reactions
 - Multi-part conversations between nearby villagers
 - Facial expressions and gestures synchronized with each voice line
+- Blended original walking and running locomotion for Villager News characters
 - Server-controlled dialogue selection, sound playback, cooldowns, and
   villager behavior
 - Speakers look toward the player, entity, block, or villager they are talking
@@ -40,6 +43,7 @@ Other version and discussion: [Villager News Addon Port Discord server](https://
 - Persistent natural spawning for one of each special character in distant
   villages
 - A craftable Villager News Handbook
+- Handbook and Microphone use their original 3D held models in first- and third-person views
 - A remappable `N` shortcut for opening Villager News settings in-game
 - Optional Mod Menu configuration screen
 - Automatic client-only dialogue fallback on servers without this mod
@@ -64,7 +68,7 @@ remappable `N` key or from the Villager News Handbook.
 
 1. Install Fabric Loader for Minecraft 26.2.
 2. Download Fabric API, EMF, and ETF for the same Minecraft version.
-3. Put the dependency jars and `Villager-News-Mod-Port-1.4.1-rc.2.jar` in the
+3. Put the dependency jars and `Villager-News-Mod-Port-1.4.1-rc.3.jar` in the
    Minecraft `mods` folder. Do not install the `-sources.jar` file.
 4. Start Minecraft with the Fabric profile.
 
@@ -190,8 +194,8 @@ On Linux or macOS:
 ```
 
 The installable jar is written to
-`build/libs/Villager-News-Mod-Port-1.4.1-rc.2.jar`. The adjacent
-`Villager-News-Mod-Port-1.4.1-rc.2-sources.jar` is not a mod installation file.
+`build/libs/Villager-News-Mod-Port-1.4.1-rc.3.jar`. The adjacent
+`Villager-News-Mod-Port-1.4.1-rc.3-sources.jar` is not a mod installation file.
 
 To include the operator-only dialogue test command in a development build, set
 `dialogue_test_command=true` in `gradle.properties` before building. Use

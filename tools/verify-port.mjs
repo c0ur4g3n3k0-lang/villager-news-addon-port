@@ -44,6 +44,7 @@ const modMenuSource = readFileSync(join(root, "src/main/java/com/vnap/client/Vil
 const settingsNetworkSource = readFileSync(join(root, "src/main/java/com/vnap/network/VillagerNewsSettingsNetwork.java"), "utf8");
 const settingsPayloadSource = readFileSync(join(root, "src/main/java/com/vnap/network/VillagerNewsSettingsPayload.java"), "utf8");
 const abstractVillagerSource = readFileSync(join(root, "src/main/java/com/vnap/mixin/AbstractVillagerMixin.java"), "utf8");
+const spawnEggMixinSource = readFileSync(join(root, "src/main/java/com/vnap/mixin/SpawnEggItemMixin.java"), "utf8");
 const villagerDataSource = readFileSync(join(root, "src/main/java/com/vnap/mixin/VillagerDataMixin.java"), "utf8");
 const tradeBackupSource = readFileSync(join(root, "src/main/java/com/vnap/entity/VillagerTradeBackup.java"), "utf8");
 const mixinConfiguration = readFileSync(join(resources, "villager-news-addon-port.mixins.json"), "utf8");
@@ -93,7 +94,7 @@ for (const [id, group] of groups) {
 		subtitleCount += variant.subtitles.length;
     variantCount++;
     const sound = event.sounds[0];
-		check(typeof sound === "object" && sound.stream === true, `Dialogue ${id}.${variant.index} is not streamed`);
+		check(typeof sound === "object" && sound.stream === false, `Dialogue ${id}.${variant.index} must use static playback`);
     const name = typeof sound === "string" ? sound : sound.name;
     const relative = name.replace("villager-news-addon-port:", "");
     check(existsSync(join(modAssets, "sounds", `${relative}.ogg`)), `Missing audio file for ${name}`);
@@ -210,6 +211,15 @@ check(animations.locomotion?.duration === 0.4375
   && animations.locomotion.tracks.right_leg_rx
   && animations.locomotion.tracks.right_leg_ty,
 "The original Bedrock walking animation is incomplete");
+check(animations.runLocomotion?.duration === 0.4375
+  && Object.keys(animations.runLocomotion.tracks).length === 17
+  && animations.runLocomotion.tracks.left_leg_rx
+  && animations.runLocomotion.tracks.left_leg_ty
+  && animations.runLocomotion.tracks.right_leg_rx
+  && animations.runLocomotion.tracks.right_leg_ty
+  && generatorSource.includes('const runLocomotionAnimation = bakeAnimationLayers(["xjouii"])')
+  && generatorSource.includes("runLocomotion: runLocomotionAnimation"),
+"The original Bedrock running locomotion is incomplete or not reproducible");
 check(animations.idles?.length === 6 && animations.idles.every((idle) => idle.duration > 0
   && Object.keys(idle.tracks).length > 0), "The six original Bedrock idle animations are incomplete");
 check(animations.continuousIdle === "animation.oreville_vn.fyqjnp"
@@ -222,20 +232,26 @@ check(animations.turnLeft === "animation.oreville_vn.aiqbsm"
 "The original left-turn and right-turn animation controller is missing");
 check(animationStateSource.includes("walkAnimation.position(partialTick)")
   && animationStateSource.includes("IDLE_STATES")
-	&& animationStateSource.includes("horizontalDistanceSqr() > 0.0001")
+	&& animationStateSource.includes("horizontalDistanceSqr > 0.0001")
 	&& animationStateSource.includes("startNext(tick, -1)")
 	&& animationStateSource.includes("blendFromIndex")
 	&& animationStateSource.includes("getGameTimeDeltaPartialTick(true)")
 	&& animationStateSource.includes("IDLE_BLEND_SECONDS")
 	&& animationStateSource.includes("idle.update(age, canIdle)")
-	&& animationStateSource.includes("poseWeightAt(active.elapsedSeconds())")
+	&& animationStateSource.includes("LOCOMOTION_STATES")
+	&& animationStateSource.includes("RUN_ENTER_SPEED")
+	&& animationStateSource.includes("RUN_EXIT_SPEED")
+	&& animationStateSource.includes("locomotionState.runWeight()")
+	&& animationStateSource.includes("runLocomotion.valueAt")
+	&& !animationStateSource.includes("poseWeightAt(active.elapsedSeconds())")
 	&& animationStateSource.includes("LOOK_STATES")
 	&& animationStateSource.includes("Mth.wrapDegrees(targetYaw - yaw)")
 	&& animationStateSource.includes("previous.poseSnapshot()")
 	&& animationStateSource.includes("active.transition(variableName, result)")
 	&& animationStateSource.includes("EMPTY_TIMELINE")
 	&& animationStateSource.includes("if (active) advance(tick)")
-	&& animationStateSource.includes("locomotion.valueAt"), "The client does not continuously and smoothly play locomotion and stationary idle tracks");
+	&& animationStateSource.includes("if (++cleanupTicks % 20 != 0) return"),
+"The client does not continuously blend walking/running locomotion and stationary idle tracks");
 	check(generatorSource.includes("torad(vnap_look_pitch*0.5)")
 		&& generatorSource.includes("torad(vnap_look_yaw*0.77)")
 		&& generatorSource.includes("max(-0.45,min(0.45,vnap_look_yaw/60))*-1")
@@ -378,8 +394,17 @@ check(behaviorSource.includes("playIronGolemAttackWitness(entity, source)")
 	&& behaviorSource.includes('playSharedId(witness, "qffeco"')
 	&& behaviorSource.includes("target = player")
 	&& behaviorSource.includes('direct.equals("snowball")')
-	&& behaviorSource.includes('direct.equals("falling_block")'),
-"Damage observers or projectile and falling-block reactions have incorrect subjects");
+	&& behaviorSource.includes("DamageTypes.FALLING_ANVIL")
+	&& behaviorSource.includes("DamageTypes.STALAGMITE")
+	&& behaviorSource.includes("DamageTypes.FALLING_STALACTITE")
+	&& behaviorSource.includes("DamageTypes.LIGHTNING_BOLT")
+	&& behaviorSource.includes("DamageTypes.EXPLOSION")
+	&& behaviorSource.includes("DamageTypes.LAVA")
+	&& behaviorSource.includes("DamageTypes.IN_FIRE")
+	&& behaviorSource.includes("DamageTypes.FREEZE")
+	&& behaviorSource.includes("DamageTypes.IN_WALL")
+	&& !behaviorSource.includes("source.getMsgId()"),
+"Damage observers or typed damage-source reactions are incomplete");
 check(behaviorSource.includes("entity instanceof WanderingTrader trader")
 	&& behaviorSource.includes('attacker instanceof Player ? "vevdkl" : "wyvzhk"')
 	&& behaviorSource.includes("cast(villager) == CastProfile.UNREACHABLE")
@@ -468,17 +493,67 @@ check(animationStateSource.includes("ACTIVE.entrySet().removeIf")
 check((behaviorSource.match(/tickRateManager\(\)\.runsNormally\(\)/g) ?? []).length >= 2
   && behaviorSource.includes("stopActiveDialogue(server)"), "Dialogue is not paused and stopped by /tick freeze");
 check(behaviorSource.includes("!VillagerNewsSettings.dialogueEnabled()")
+  && behaviorSource.includes("clearMutedDialogueState()")
+  && behaviorSource.includes("PENDING_WAKE.clear()")
+  && behaviorSource.includes("PENDING_BELLS.clear()")
+  && behaviorSource.includes("PENDING_CONDITION_RELIEF.clear()")
   && settingsStateSource.includes("getConnection() != null"), "Muting dialogue is not handled safely");
 check((behaviorSource.match(/!villager\.isSleeping\(\)/g) ?? []).length >= 5
 	&& behaviorSource.includes("if (sleeping)")
-	&& behaviorSource.includes('villager.isSleeping() && !group.id().equals("asqzby")'), "Sleeping villagers still react through normal observer paths");
+	&& behaviorSource.includes('sleepingVillager.isSleeping() && !group.id().equals("asqzby")'),
+"Sleeping villagers still react through normal observer paths");
 check(behaviorSource.includes("delayVillagerSleep")
   && behaviorSource.includes("processPendingSleep")
-  && behaviorSource.includes("PENDING_SLEEP.remove(villager.getUUID())")
+  && behaviorSource.includes("processPendingWake")
+  && behaviorSource.includes("PENDING_WAKE")
+  && behaviorSource.includes("WAKE_SOURCES")
+  && behaviorSource.includes("isVillagerSleepTime")
+  && behaviorSource.includes('new PendingWake(level, id, dialogue, targetId, ticks + 4L)')
+  && behaviorSource.includes('WAKE_SOURCES.put(id, player.getUUID())')
   && existsSync(join(root, "src/main/java/com/vnap/mixin/VillagerSleepMixin.java"))
-  && mixinConfiguration.includes("VillagerSleepMixin"), "Villager sleep dialogue timing and interruption are incomplete");
+  && mixinConfiguration.includes("VillagerSleepMixin"),
+"Villager sleep dialogue timing, delayed wake, or interruption targeting is incomplete");
 check(behaviorSource.includes("updatedVillagers.add(villager.getUUID())")
   && behaviorSource.includes("checkedPairs.add(pair)"), "Nearby multiplayer scans still repeat villager and pair work");
+check(behaviorSource.includes("CONDITION_HISTORY")
+  && behaviorSource.includes("CONDITION_CURSORS")
+  && behaviorSource.includes("CONDITION_LAST_TICK")
+  && behaviorSource.includes("PENDING_CONDITION_RELIEF")
+  && behaviorSource.includes("activeConditionMask")
+  && behaviorSource.includes("CONDITION_SUFFOCATING")
+  && behaviorSource.includes("processPendingConditionRelief")
+  && behaviorSource.includes("queueFreedSuffocationRelief")
+  && behaviorSource.includes("ONGOING_DAMAGE_DIALOGUES")
+  && !behaviorSource.includes("private static List<String> activeConditionDialogues"),
+"Ongoing villager conditions, recovery dialogue, or allocation-free condition tracking is incomplete");
+check(behaviorSource.includes("PENDING_BELLS")
+  && behaviorSource.includes("PENDING_BELL_REACTIONS")
+  && behaviorSource.includes("queueBell(serverLevel, hitResult.getLocation())")
+  && behaviorSource.includes("nearbyVillagers(pending.level, pending.position, 50.0)")
+  && behaviorSource.includes('villager.isBaby() ? "nxalcz" : "kljgyu"'),
+"Delayed village-wide bell reactions are incomplete");
+check(behaviorSource.includes("for (Villager candidate : villagers)")
+  && behaviorSource.includes("nearestConversationPartner(candidate, villagers)")
+  && behaviorSource.includes("candidate.getUUID().compareTo(partner.getUUID()) <= 0")
+  && !behaviorSource.includes("for (int secondIndex = firstIndex + 1"),
+"Conversation pairing still depends on villager list order");
+check(spawnEggMixinSource.includes('method = "spawnOffspringFromSpawnEgg"')
+  && spawnEggMixinSource.includes("ContextualDialogueController.onBabySpawnedFromEgg")
+  && behaviorSource.includes("public static void onBabySpawnedFromEgg")
+  && behaviorSource.includes('new PendingSpeech(level, id, "abfwiv"')
+  && mixinConfiguration.includes("SpawnEggItemMixin"),
+"Baby villagers spawned from spawn eggs do not receive the dedicated dialogue hook");
+check(clientOnlySource.includes("if (ticks % 2L == 0L) processEntityChanges")
+  && clientOnlySource.includes("cast(villager) == CastProfile.VILLAGER")
+  && clientOnlySource.includes("horizontalDistanceSqr() > 0.0001")
+  && clientOnlySource.includes("PENDING_BELLS")
+  && clientOnlySource.includes("processPendingBells()")
+  && clientOnlySource.includes("PENDING_WAKES")
+  && clientOnlySource.includes('playId(villager, "viwaal", "wake_interact:"')
+  && clientOnlySource.includes("private static int activeConditionMask(Villager villager)")
+  && clientOnlySource.includes("PENDING_CONDITION_RELIEF")
+  && clientOnlySource.includes("blockedByCondition"),
+"Client-only fallback does not preserve the new observer, condition, bell/wake, or throttled entity-scan behavior");
 check(behaviorSource.includes("tryCreateNaturalSpecial"), "Natural special-character spawning is missing");
 check(!behaviorSource.includes("InteractionResult.FAIL"), "Dialogue hooks still reject vanilla trading interactions");
 check(existsSync(join(root, "src/main/java/com/vnap/mixin/AbstractVillagerMixin.java")), "Trade completion mixin is missing");
@@ -789,6 +864,40 @@ for (const file of readdirSync(join(modAssets, "sounds", "voice")).filter((name)
     offset += 27 + segmentCount + bodySize;
   }
 }
+const heldGeometry = {
+  handbook: { elementCount: 12, textureSize: [19, 12], geometry: "geometry.oreville_vn.-1897072036", texture: "eaz" },
+  microphone: { elementCount: 2, textureSize: [16, 16], geometry: "geometry.oreville_vn.96833500", texture: "ebb" },
+};
+const heldContexts = new Set([
+  "thirdperson_righthand",
+  "thirdperson_lefthand",
+  "firstperson_righthand",
+  "firstperson_lefthand",
+]);
+for (const [item, expected] of Object.entries(heldGeometry)) {
+  const definition = JSON.parse(readFileSync(join(modAssets, "items", `${item}.json`), "utf8"));
+  const held = JSON.parse(readFileSync(join(modAssets, "models", "item", `${item}_held.json`), "utf8"));
+  const textureFile = join(modAssets, "textures", "item", "held", `${item}.png`);
+  const contexts = new Set(definition.model?.cases?.map((entry) => entry.when));
+  check(definition.model?.type === "minecraft:select"
+    && definition.model?.property === "minecraft:display_context"
+    && [...heldContexts].every((context) => contexts.has(context)),
+  `${item} does not use its original 3D model in every hand context`);
+  check(definition.model?.fallback?.model === `villager-news-addon-port:item/${item}`,
+    `${item} does not preserve its inventory model`);
+  check(held.elements?.length === expected.elementCount
+    && held.elements.every((element) => element.from?.length === 3 && element.to?.length === 3
+      && Object.keys(element.faces ?? {}).length > 0),
+  `${item} has incomplete held geometry`);
+  check(existsSync(textureFile), `${item} is missing its original held texture`);
+  const texture = readFileSync(textureFile);
+  check(texture.readUInt32BE(16) === expected.textureSize[0]
+    && texture.readUInt32BE(20) === expected.textureSize[1], `${item} held texture has the wrong dimensions`);
+  check(generatorSource.includes(expected.geometry) && generatorSource.includes(`texture: "${expected.texture}"`)
+    && generatorSource.includes("function heldItemElement") && generatorSource.includes("const handContexts = ["),
+  `${item} held model is not reproducible from the original attachable`);
+}
+
 const wearableGeometry = {
   mayor_hat: { elementCount: 8, from: [2.4, 14.4, 2.4], to: [13.6, 16, 13.6], textureSize: [32, 32] },
   moustache: { elementCount: 1, from: [4.8, 4, 0.4], to: [11.2, 5.6, 0.8], textureSize: [16, 16] },

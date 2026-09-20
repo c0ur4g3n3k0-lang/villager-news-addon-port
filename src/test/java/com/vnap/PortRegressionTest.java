@@ -195,6 +195,13 @@ class PortRegressionTest {
 		String tick = methodBody(controller, "private static void tick(MinecraftServer server)");
 		String disabledBranch = blockBody(tick, tick.indexOf("if (!VillagerNewsSettings.dialogueEnabled())"));
 		assertTrue(disabledBranch.contains("releasePendingSleep();"));
+		assertTrue(disabledBranch.contains("clearMutedDialogueState();"));
+		String cleanup = methodBody(controller, "private static void clearMutedDialogueState()");
+		assertTrue(cleanup.contains("PENDING_SPEECH.clear()"));
+		assertTrue(cleanup.contains("PENDING_WAKE.clear()"));
+		assertTrue(cleanup.contains("PENDING_BELLS.clear()"));
+		assertTrue(cleanup.contains("PENDING_CONDITION_RELIEF.clear()"));
+		assertTrue(cleanup.contains("ACTIVE_TRADES.clear()"));
 		assertTrue(disabledBranch.contains("return;"));
 	}
 
@@ -517,6 +524,89 @@ class PortRegressionTest {
 		assertTrue(spawnSetter.contains("if (!canEdit || localSettings) return;"));
 		assertTrue(english.contains("\"screen.villager-news-addon-port.settings.spawn_special_villagers.server_only\": \"Server-side only\""));
 		assertTrue(russian.contains("\"screen.villager-news-addon-port.settings.spawn_special_villagers.server_only.tooltip\": \"Доступно только при установленном моде на сервере.\""));
+	}
+
+	@Test
+	void upstream135ConditionsUseTypedDamageAndBoundedStateTracking() {
+		String controller = read("src/main/java/com/vnap/dialogue/ContextualDialogueController.java");
+		assertTrue(controller.contains("DamageTypes.FALLING_ANVIL"));
+		assertTrue(controller.contains("DamageTypes.LIGHTNING_BOLT"));
+		assertTrue(controller.contains("DamageTypes.EXPLOSION"));
+		assertTrue(controller.contains("DamageTypes.LAVA"));
+		assertTrue(controller.contains("DamageTypes.IN_FIRE"));
+		assertTrue(controller.contains("DamageTypes.FREEZE"));
+		assertTrue(controller.contains("DamageTypes.IN_WALL"));
+		assertFalse(controller.contains("source.getMsgId()"));
+		assertTrue(controller.contains("private static int activeConditionMask(Villager villager)"));
+		assertTrue(controller.contains("CONDITION_HISTORY"));
+		assertTrue(controller.contains("PENDING_CONDITION_RELIEF"));
+		assertTrue(controller.contains("CONDITION_SUFFOCATING"));
+		assertFalse(controller.contains("private static List<String> activeConditionDialogues"));
+	}
+
+	@Test
+	void upstream135WakeBellAndBabySpawnEggEventsAreIntegrated() {
+		String controller = read("src/main/java/com/vnap/dialogue/ContextualDialogueController.java");
+		String spawnEgg = read("src/main/java/com/vnap/mixin/SpawnEggItemMixin.java");
+		String mixins = read("src/main/resources/villager-news-addon-port.mixins.json");
+		assertTrue(controller.contains("PENDING_WAKE"));
+		assertTrue(controller.contains("WAKE_SOURCES"));
+		assertTrue(controller.contains("processPendingWake()"));
+		assertTrue(controller.contains("PENDING_BELLS"));
+		assertTrue(controller.contains("PENDING_BELL_REACTIONS"));
+		assertTrue(controller.contains("nearbyVillagers(pending.level, pending.position, 50.0)"));
+		assertTrue(controller.contains("public static void onBabySpawnedFromEgg"));
+		assertTrue(spawnEgg.contains("spawnOffspringFromSpawnEgg"));
+		assertTrue(spawnEgg.contains("ContextualDialogueController.onBabySpawnedFromEgg"));
+		assertTrue(mixins.contains("SpawnEggItemMixin"));
+	}
+
+	@Test
+	void upstream135ConversationPairSelectionIsOrderIndependent() {
+		String controller = read("src/main/java/com/vnap/dialogue/ContextualDialogueController.java");
+		String conversations = methodBody(controller, "private static void processConversations(ServerLevel level)");
+		assertTrue(conversations.contains("for (Villager candidate : villagers)"));
+		assertTrue(conversations.contains("nearestConversationPartner(candidate, villagers)"));
+		assertTrue(conversations.contains("candidate.getUUID().compareTo(partner.getUUID()) <= 0"));
+		assertFalse(conversations.contains("for (int secondIndex = firstIndex + 1"));
+	}
+
+	@Test
+	void upstream135RunLocomotionAndHeldItemModelsAreIntegrated() {
+		String animation = read("src/main/java/com/vnap/client/DialogueAnimationState.java");
+		String animationData = read("src/main/resources/assets/villager-news-addon-port/dialogue_animations.json");
+		String generator = read("tools/port-addon.mjs");
+		assertTrue(animation.contains("LOCOMOTION_STATES"));
+		assertTrue(animation.contains("RUN_ENTER_SPEED"));
+		assertTrue(animation.contains("RUN_EXIT_SPEED"));
+		assertTrue(animation.contains("runLocomotion.valueAt"));
+		assertTrue(animation.contains("if (++cleanupTicks % 20 != 0) return"));
+		assertFalse(animation.contains("poseWeightAt(active.elapsedSeconds())"));
+		assertTrue(animationData.contains("\"runLocomotion\""));
+		assertTrue(generator.contains("bakeAnimationLayers([\"xjouii\"])"));
+		assertTrue(generator.contains("function heldItemElement"));
+		for (String item : new String[] {"handbook", "microphone"}) {
+			assertTrue(Files.exists(ROOT.resolve("src/main/resources/assets/villager-news-addon-port/models/item/" + item + "_held.json")));
+			assertTrue(Files.exists(ROOT.resolve("src/main/resources/assets/villager-news-addon-port/textures/item/held/" + item + ".png")));
+			String definition = read("src/main/resources/assets/villager-news-addon-port/items/" + item + ".json");
+			assertTrue(definition.contains("minecraft:display_context"));
+			assertTrue(definition.contains(item + "_held"));
+		}
+	}
+
+	@Test
+	void clientOnlyFallbackThrottlesBroadEntityChangeScanning() {
+		String engine = read("src/main/java/com/vnap/client/ClientOnlyDialogueController.java");
+		String tick = methodBody(engine, "public static void tick(Minecraft minecraft)");
+		assertTrue(tick.contains("if (ticks % 2L == 0L) processEntityChanges"));
+		assertTrue(tick.contains("processPendingBells()"));
+		assertTrue(engine.contains("PENDING_BELLS"));
+		assertTrue(engine.contains("PENDING_WAKES"));
+		assertTrue(engine.contains("PENDING_CONDITION_RELIEF"));
+		assertTrue(engine.contains("private static int activeConditionMask(Villager villager)"));
+		assertTrue(engine.contains("blockedByCondition"));
+		assertTrue(engine.contains("cast(villager) == CastProfile.VILLAGER"));
+		assertTrue(engine.contains("horizontalDistanceSqr() > 0.0001"));
 	}
 
 	@Test

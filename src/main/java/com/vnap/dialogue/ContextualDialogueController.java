@@ -27,6 +27,7 @@ import net.minecraft.util.Mth;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.Difficulty;
+import net.minecraft.world.damagesource.DamageTypes;
 import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntitySpawnReason;
@@ -89,6 +90,10 @@ public final class ContextualDialogueController {
 	private static final Map<UUID, Boolean> LAST_SLEEPING = new HashMap<>();
 	private static final Map<UUID, Boolean> LAST_TRADER_INVISIBLE = new HashMap<>();
 	private static final Map<UUID, VillagerSnapshot> VILLAGER_STATES = new HashMap<>();
+	private static final Map<UUID, Integer> CONDITION_HISTORY = new HashMap<>();
+	private static final Map<UUID, Integer> CONDITION_CURSORS = new HashMap<>();
+	private static final Map<UUID, Long> CONDITION_LAST_TICK = new HashMap<>();
+	private static final Map<UUID, PendingConditionRelief> PENDING_CONDITION_RELIEF = new HashMap<>();
 	private static final Map<UUID, Map<String, Integer>> VILLAGER_INVENTORIES = new HashMap<>();
 	private static final Map<UUID, SpeechTarget> SPEECH_TARGETS = new HashMap<>();
 	private static final Map<String, List<Integer>> SHARED_RECENT_VARIANTS = new HashMap<>();
@@ -99,6 +104,10 @@ public final class ContextualDialogueController {
 	private static final Map<UUID, UnreachableState> UNREACHABLE_STATES = new HashMap<>();
 	private static final Set<UUID> ACTIVE_PLAYER_ENCOUNTERS = new HashSet<>();
 	private static final Map<UUID, PendingSleep> PENDING_SLEEP = new HashMap<>();
+	private static final Map<UUID, PendingWake> PENDING_WAKE = new HashMap<>();
+	private static final List<PendingBell> PENDING_BELLS = new ArrayList<>();
+	private static final List<PendingBellReaction> PENDING_BELL_REACTIONS = new ArrayList<>();
+	private static final Map<UUID, UUID> WAKE_SOURCES = new HashMap<>();
 	private static final Set<UUID> SLEEP_BYPASS = new HashSet<>();
 	private static final Set<UUID> INTERRUPTED_SLEEP = new HashSet<>();
 	private static final List<PendingSpeech> PENDING_SPEECH = new ArrayList<>();
@@ -138,9 +147,30 @@ public final class ContextualDialogueController {
 	private static final Set<String> COSMETIC_RECIPIENT_DIALOGUES = Set.of(
 		"wurmgu", "inirxg", "ozxzla", "cxeziv", "riezum", "rlkdqd"
 	);
-	private static final Set<String> DAMAGE_LOCK_DIALOGUES = Set.of(
-		"elryje", "onindz", "rogpvp", "etkxko", "igebly", "vnaodx"
+	private static final Set<String> ONGOING_DAMAGE_DIALOGUES = Set.of(
+		"elryje", "rogpvp", "etkxko", "igebly", "vnaodx"
 	);
+	private static final Set<String> DAMAGE_LOCK_DIALOGUES = Set.of(
+		"huhcbd", "gesjov", "gacgtq", "hmadgp", "nkcoqb", "qhpyaw", "uveohs", "caykki",
+		"swomdw", "rtikom", "hfmwvf", "mytmrk", "ikrwzy", "fcbygh", "elryje", "rogpvp",
+		"etkxko", "igebly", "vnaodx", "yzqpvi", "nsxmkr", "cifbit", "wyvzhk", "rueszy",
+		"yjctyw", "qqyjjg", "hpnsfu", "vevdkl", "ahcvzd", "ecslqo", "ssbhiv", "ltdnvy",
+		"fzoqwd", "behifz", "wrbvvp", "asuufu", "eyiraw", "ncyeaw", "onindz", "xemyaj", "yebifs"
+	);
+	private static final int CONDITION_POISON = 1;
+	private static final int CONDITION_SLOWNESS = 1 << 1;
+	private static final int CONDITION_WEAKNESS = 1 << 2;
+	private static final int CONDITION_LAVA = 1 << 3;
+	private static final int CONDITION_FIRE = 1 << 4;
+	private static final int CONDITION_FROZEN = 1 << 5;
+	private static final int CONDITION_SUFFOCATING = 1 << 6;
+	private static final int[] CONDITION_BITS = {
+		CONDITION_POISON, CONDITION_SLOWNESS, CONDITION_WEAKNESS, CONDITION_LAVA,
+		CONDITION_FIRE, CONDITION_FROZEN, CONDITION_SUFFOCATING
+	};
+	private static final String[] CONDITION_DIALOGUES = {
+		"onindz", "xemyaj", "yebifs", "elryje", "etkxko", "igebly", "vnaodx"
+	};
 	private static final List<List<String>> WANDERING_CONVERSATIONS = List.of(
 		List.of("gmrypkswxeva", "gmrypkbayahw", "gmrypkmudlec"),
 		List.of("gmrypkoallbt", "gmrypkfobzlt", "gmrypkcljvls"),
@@ -209,6 +239,10 @@ public final class ContextualDialogueController {
 			LAST_SLEEPING.remove(id);
 			LAST_TRADER_INVISIBLE.remove(id);
 			VILLAGER_STATES.remove(id);
+			CONDITION_HISTORY.remove(id);
+			CONDITION_CURSORS.remove(id);
+			CONDITION_LAST_TICK.remove(id);
+			PENDING_CONDITION_RELIEF.remove(id);
 			VILLAGER_INVENTORIES.remove(id);
 			NO_WORKSTATION_SINCE.remove(id);
 			LAST_DANGER.remove(id);
@@ -220,6 +254,8 @@ public final class ContextualDialogueController {
 			ACTIVE_TRADES.entrySet().removeIf(entry -> entry.getValue().traderId.equals(id));
 			UNREACHABLE_STATES.remove(id);
 			PENDING_SLEEP.remove(id);
+			PENDING_WAKE.remove(id);
+			WAKE_SOURCES.remove(id);
 			SLEEP_BYPASS.remove(id);
 			INTERRUPTED_SLEEP.remove(id);
 			PENDING_SPEECH.removeIf(pending -> pending.speakerId.equals(id) || id.equals(pending.targetId));
@@ -228,6 +264,7 @@ public final class ContextualDialogueController {
 
 		PlayerBlockBreakEvents.AFTER.register((level, player, pos, state, blockEntity) -> {
 			if (level instanceof ServerLevel serverLevel) {
+				if (queueFreedSuffocationRelief(serverLevel, pos)) return;
 				PlayerObservation observation = PLAYER_OBSERVATIONS.computeIfAbsent(player.getUUID(), ignored -> new PlayerObservation());
 				String title = selectBreakContext(state, observation);
 				if (title.equals("Harvest Crops") && nearbyVillagers(serverLevel, Vec3.atCenterOf(pos), OBSERVER_RANGE).stream()
@@ -243,6 +280,10 @@ public final class ContextualDialogueController {
 				BlockState clicked = level.getBlockState(hitResult.getBlockPos());
 				String clickedPath = BuiltInRegistries.BLOCK.getKey(clicked.getBlock()).getPath();
 				boolean itemOnlyInteraction = player.isSecondaryUseActive() && !held.isEmpty();
+				if (!itemOnlyInteraction && clickedPath.equals("bell")) {
+					queueBell(serverLevel, hitResult.getLocation());
+					return InteractionResult.PASS;
+				}
 				String title = selectHeldBlockContext(held, clicked);
 				if (title == null && !itemOnlyInteraction) {
 					title = selectUseBlockContext(clicked);
@@ -253,12 +294,7 @@ public final class ContextualDialogueController {
 				boolean played = !itemOnlyInteraction && (clickedPath.equals("chest") || clickedPath.equals("trapped_chest"))
 					&& playHomeChestReaction(serverLevel, player, hitResult.getBlockPos());
 				if (!played) played = title != null && playObserved(serverLevel, player, hitResult.getLocation(), title, SHORT_COOLDOWN);
-				if (!played && !itemOnlyInteraction && clickedPath.equals("bell")) {
-					nearbyVillagers(serverLevel, hitResult.getLocation(), OBSERVER_RANGE).stream()
-						.filter(villager -> villager.isBaby() && !villager.isSleeping())
-						.min(Comparator.comparingDouble(villager -> villager.distanceToSqr(hitResult.getLocation())))
-						.ifPresent(baby -> playId(baby, "nxalcz", "baby_bell:" + baby.getUUID(), SHORT_COOLDOWN, player));
-				}
+
 			}
 			return InteractionResult.PASS;
 		});
@@ -294,13 +330,19 @@ public final class ContextualDialogueController {
 				playObserved(player.level(), player, player.position(), armored ? "Wake Up in Armor" : "Player Wakes Up", LONG_COOLDOWN);
 			} else if (entity instanceof Villager villager) {
 				UUID id = villager.getUUID();
-				boolean interrupted = INTERRUPTED_SLEEP.remove(id);
-				PENDING_SLEEP.remove(villager.getUUID());
-				SLEEP_BYPASS.remove(villager.getUUID());
+				boolean explicitlyInterrupted = INTERRUPTED_SLEEP.remove(id);
+				PENDING_SLEEP.remove(id);
+				SLEEP_BYPASS.remove(id);
 				interrupt(villager);
-				if (interrupted || entity.level() instanceof ServerLevel level
-						&& Math.floorMod(level.getOverworldClockTime(), 24000L) >= 12000L) {
+				if (entity.level() instanceof ServerLevel level) {
+					boolean interrupted = explicitlyInterrupted || isVillagerSleepTime(villager, level);
+					String dialogue = interrupted ? "viwaal" : "ctptjt";
+					UUID targetId = interrupted ? WAKE_SOURCES.remove(id) : null;
+					PENDING_WAKE.put(id, new PendingWake(level, id, dialogue, targetId, ticks + 4L));
 					LAST_SLEEPING.put(id, false);
+				} else {
+					PENDING_WAKE.remove(id);
+					WAKE_SOURCES.remove(id);
 				}
 			}
 		});
@@ -361,6 +403,13 @@ public final class ContextualDialogueController {
 		}
 	}
 
+	public static void onBabySpawnedFromEgg(Villager villager, Player player) {
+		if (!(villager.level() instanceof ServerLevel level) || !villager.isBaby()
+				|| villager.entityTags().contains(DIALOGUE_TEST_TAG)) return;
+		UUID id = villager.getUUID();
+		PENDING_SPEECH.removeIf(pending -> pending.speakerId.equals(id) || id.equals(pending.targetId));
+		PENDING_SPEECH.add(new PendingSpeech(level, id, "abfwiv", player.getUUID(), ticks + 2L));
+	}
 	private static void processPendingSpeech() {
 		PENDING_SPEECH.removeIf(pending -> {
 			if (pending.dueTick > ticks) return false;
@@ -522,13 +571,17 @@ public final class ContextualDialogueController {
 		if (!VillagerNewsSettings.dialogueEnabled()) {
 			stopActiveDialogue(server);
 			releasePendingSleep();
+			clearMutedDialogueState();
 			ACTIVE_PLAYER_ENCOUNTERS.clear();
 			return;
 		}
 		ACTIVE_SOUNDS.entrySet().removeIf(entry -> entry.getValue().endTick <= ticks);
 		maintainSpeechTargets(server);
 		processPendingSleep();
+		processPendingConditionRelief();
+		processPendingWake();
 		processPendingSpeech();
+		processPendingBells();
 		processTradeSessions(server);
 		if (ticks % 10L != 0L) return;
 
@@ -559,6 +612,20 @@ public final class ContextualDialogueController {
 		}
 	}
 
+	private static void clearMutedDialogueState() {
+		PENDING_SPEECH.clear();
+		PENDING_WAKE.clear();
+		WAKE_SOURCES.clear();
+		INTERRUPTED_SLEEP.clear();
+		PENDING_BELLS.clear();
+		PENDING_BELL_REACTIONS.clear();
+		PENDING_CONDITION_RELIEF.clear();
+		CONDITION_HISTORY.clear();
+		CONDITION_CURSORS.clear();
+		CONDITION_LAST_TICK.clear();
+		ACTIVE_TRADES.clear();
+	}
+
 	private static void clearState() {
 		COOLDOWNS.clear();
 		BUSY_UNTIL.clear();
@@ -568,6 +635,10 @@ public final class ContextualDialogueController {
 		LAST_SLEEPING.clear();
 		LAST_TRADER_INVISIBLE.clear();
 		VILLAGER_STATES.clear();
+		CONDITION_HISTORY.clear();
+		CONDITION_CURSORS.clear();
+		CONDITION_LAST_TICK.clear();
+		PENDING_CONDITION_RELIEF.clear();
 		VILLAGER_INVENTORIES.clear();
 		SPEECH_TARGETS.clear();
 		SHARED_RECENT_VARIANTS.clear();
@@ -578,6 +649,10 @@ public final class ContextualDialogueController {
 		UNREACHABLE_STATES.clear();
 		ACTIVE_PLAYER_ENCOUNTERS.clear();
 		PENDING_SLEEP.clear();
+		PENDING_WAKE.clear();
+		PENDING_BELLS.clear();
+		PENDING_BELL_REACTIONS.clear();
+		WAKE_SOURCES.clear();
 		SLEEP_BYPASS.clear();
 		INTERRUPTED_SLEEP.clear();
 		PENDING_SPEECH.clear();
@@ -585,6 +660,52 @@ public final class ContextualDialogueController {
 		LAST_DIFFICULTY.clear();
 		PAIR_TICKS.clear();
 		ticks = 0L;
+	}
+
+	private static void processPendingWake() {
+		PENDING_WAKE.entrySet().removeIf(entry -> {
+			PendingWake pending = entry.getValue();
+			if (pending.dueTick > ticks) return false;
+			Entity entity = pending.level.getEntity(pending.villagerId);
+			if (!(entity instanceof Villager villager) || !villager.isAlive() || villager.isSleeping()) return true;
+			if (isBusy(villager)) return false;
+			Entity target = pending.targetId == null ? null : pending.level.getEntity(pending.targetId);
+			return playSharedId(villager, pending.dialogueId,
+				"wake:" + pending.villagerId + ":" + pending.dialogueId, 1L, target);
+		});
+	}
+
+	private static void queueBell(ServerLevel level, Vec3 position) {
+		boolean queued = PENDING_BELLS.stream().anyMatch(pending -> pending.level == level
+			&& pending.position.distanceToSqr(position) < 0.25 && pending.dueTick > ticks);
+		if (!queued) PENDING_BELLS.add(new PendingBell(level, position, ticks + 15L));
+	}
+
+	private static void processPendingBells() {
+		PENDING_BELLS.removeIf(pending -> {
+			if (pending.dueTick > ticks) return false;
+			for (Villager villager : nearbyVillagers(pending.level, pending.position, 50.0)) {
+				if (villager.isSleeping() || cast(villager) != CastProfile.VILLAGER) continue;
+				long dueTick = ticks + ThreadLocalRandom.current().nextInt(5);
+				PENDING_BELL_REACTIONS.add(new PendingBellReaction(pending.level, villager.getUUID(), pending.position,
+					dueTick, dueTick + 10L));
+			}
+			return true;
+		});
+		PENDING_BELL_REACTIONS.removeIf(pending -> {
+			if (pending.dueTick > ticks) return false;
+			Entity entity = pending.level.getEntity(pending.villagerId);
+			if (!(entity instanceof Villager villager) || !villager.isAlive() || villager.isSleeping()
+					|| cast(villager) != CastProfile.VILLAGER) return true;
+			if (isBusy(villager)) return ticks >= pending.expireTick;
+			String id = villager.isBaby() ? "nxalcz" : "kljgyu";
+			return playId(villager, id, "bell:" + pending.dueTick + ":" + villager.getUUID(), 1L, pending.position)
+				|| ticks >= pending.expireTick;
+		});
+	}
+	private static boolean isVillagerSleepTime(Villager villager, ServerLevel level) {
+		long time = Math.floorMod(level.getOverworldClockTime(), 24000L);
+		return profession(villager).equals("nitwit") ? time >= 14000L || time < 2000L : time >= 12000L;
 	}
 
 	private static void processPendingSleep() {
@@ -819,6 +940,7 @@ public final class ContextualDialogueController {
 
 		List<Villager> nearby = nearbyVillagers(level, player.position(), OBSERVER_RANGE).stream()
 			.filter(villager -> !villager.isSleeping()).toList();
+		for (Villager villager : nearby) processConditionDialogues(villager);
 		Villager adult = nearby.stream()
 			.filter(villager -> !villager.isBaby())
 			.filter(villager -> cast(villager) != CastProfile.UNREACHABLE)
@@ -981,7 +1103,7 @@ public final class ContextualDialogueController {
 	private static String playerContext(ServerPlayer player, Villager villager) {
 		if (player.isFallFlying()) return "Glide with Elytra";
 		if (player.gameMode().getName().equals("creative") && player.getAbilities().flying) return "Fly in Creative Mode";
-		if (player.isShiftKeyDown() && player.getDeltaMovement().horizontalDistanceSqr() > 0.002) return "Crouch-Walk";
+		if (player.isShiftKeyDown() && player.getDeltaMovement().horizontalDistanceSqr() > 0.0001) return "Crouch-Walk";
 		if (player.getHealth() <= player.getMaxHealth() * 0.3F) return "Low Health";
 		if (player.hasEffect(MobEffects.INVISIBILITY)) return "Invisibility";
 		if (player.hasEffect(MobEffects.DARKNESS)) return "Darkness";
@@ -1061,7 +1183,8 @@ public final class ContextualDialogueController {
 		for (ServerPlayer player : level.players()) {
 			List<Villager> villagers = nearbyVillagers(level, player.position(), 24).stream()
 				.filter(villager -> !villager.isBaby() && !villager.isSleeping())
-				.filter(villager -> cast(villager) != CastProfile.UNREACHABLE).toList();
+				.filter(villager -> cast(villager) != CastProfile.UNREACHABLE)
+				.filter(villager -> activeConditionMask(villager) == 0).toList();
 			for (Villager subject : villagers) {
 				if (data(subject).vnap$cosmetic() == 0) continue;
 				Villager witness = villagers.stream().filter(other -> other != subject && other.hasLineOfSight(subject))
@@ -1077,63 +1200,62 @@ public final class ContextualDialogueController {
 			Villager gatheringTarget = gatheringSpeaker == null ? null : nearestConversationPartner(gatheringSpeaker, villagers);
 			if (gatheringTarget != null && villagers.size() >= 3 && playId(gatheringSpeaker, "ebfifz",
 					"gathering:" + player.getUUID(), LONG_COOLDOWN, gatheringTarget)) return;
-			for (int firstIndex = 0; firstIndex < villagers.size(); firstIndex++) {
-				Villager first = villagers.get(firstIndex);
-				Villager nearestPartner = nearestConversationPartner(first, villagers);
-				if (nearestPartner == null) continue;
-				for (int secondIndex = firstIndex + 1; secondIndex < villagers.size(); secondIndex++) {
-					Villager second = villagers.get(secondIndex);
-					String pair = orderedPair(first.getUUID(), second.getUUID());
-					if (second != nearestPartner || !checkedPairs.add(pair) || isBusy(first) || isBusy(second)) continue;
-					int togetherTicks = PAIR_TICKS.merge(pair, 100, Integer::sum);
-					if (togetherTicks < 200) continue;
-					boolean firstHasNose = data(first).vnap$hasNose();
-					boolean secondHasNose = data(second).vnap$hasNose();
-					if (!firstHasNose || !secondHasNose) {
-						boolean bothMissing = !firstHasNose && !secondHasNose;
-						Villager conversationSpeaker = !bothMissing && !firstHasNose ? second : first;
-						Villager conversationSubject = conversationSpeaker == first ? second : first;
-						List<List<String>> choices = bothMissing
-							? TWO_MISSING_NOSES_CONVERSATIONS : ONE_MISSING_NOSE_CONVERSATIONS;
-						List<String> sequence = choices.get(Math.floorMod(pair.hashCode() + (int) (ticks / LONG_COOLDOWN), choices.size()));
-						if (playId(conversationSpeaker, sequence.getFirst(), "nose_conversation:" + pair + ":" + sequence.getFirst(),
-								LONG_COOLDOWN, conversationSubject)) {
-							holdListener(conversationSubject, conversationSpeaker, DialogueCatalog.byId(sequence.getFirst()).durationTicks());
-							queueConversation(level, conversationSpeaker, conversationSubject, sequence);
-							PAIR_TICKS.put(pair, 0);
-						}
-						return;
-					}
-					CastProfile firstCast = cast(first);
-					CastProfile secondCast = cast(second);
-					String meetId = meetDialogue(firstCast == CastProfile.VILLAGER ? secondCast : firstCast);
-					if (meetId != null && (firstCast == CastProfile.VILLAGER || secondCast == CastProfile.VILLAGER)) {
-						Villager speaker = firstCast == CastProfile.VILLAGER ? first : second;
-						Villager subject = speaker == first ? second : first;
-						if (playId(speaker, meetId, "meet:" + pair, LONG_COOLDOWN, subject)) {
-							holdListener(subject, speaker, 80L);
-							PAIR_TICKS.put(pair, 0);
-						}
-						return;
-					}
-					boolean atCampfire = nearBlock(level, first.blockPosition(), "campfire", 4)
-						&& nearBlock(level, second.blockPosition(), "campfire", 4);
-					boolean negativeGossip = isNegativeReputation(first, player) || isNegativeReputation(second, player);
-					String conversation = atCampfire ? CAMPFIRE_CONVERSATION.getFirst()
-						: first.getVehicle() != null && first.getVehicle() == second.getVehicle()
-						? "zqfvby"
-						: negativeGossip && first.getDeltaMovement().horizontalDistanceSqr()
-							+ second.getDeltaMovement().horizontalDistanceSqr() < 0.0004
-							? (Math.floorMod(pair.hashCode() + (int) (ticks / LONG_COOLDOWN), 2) == 0 ? "wrjbdd" : GOSSIP_CONVERSATION.getFirst())
-							: wanderingConversation(pair).getFirst();
-					if (playId(first, conversation, "conversation:" + pair + ":" + conversation, LONG_COOLDOWN, second)) {
-						holdListener(second, first, DialogueCatalog.byId(conversation).durationTicks());
-						if (conversation.startsWith("gmrypk")) queueWanderingConversation(level, first, second, wanderingConversation(pair));
-						else if (atCampfire) queueConversation(level, first, second, CAMPFIRE_CONVERSATION);
-						else if (conversation.equals(GOSSIP_CONVERSATION.getFirst())) queueConversation(level, first, second, GOSSIP_CONVERSATION);
+			for (Villager candidate : villagers) {
+				Villager partner = nearestConversationPartner(candidate, villagers);
+				if (partner == null) continue;
+				String pair = orderedPair(candidate.getUUID(), partner.getUUID());
+				if (!checkedPairs.add(pair)) continue;
+				Villager first = candidate.getUUID().compareTo(partner.getUUID()) <= 0 ? candidate : partner;
+				Villager second = first == candidate ? partner : candidate;
+				if (isBusy(first) || isBusy(second)) continue;
+				int togetherTicks = PAIR_TICKS.merge(pair, 100, Integer::sum);
+				if (togetherTicks < 200) continue;
+				boolean firstHasNose = data(first).vnap$hasNose();
+				boolean secondHasNose = data(second).vnap$hasNose();
+				if (!firstHasNose || !secondHasNose) {
+					boolean bothMissing = !firstHasNose && !secondHasNose;
+					Villager conversationSpeaker = !bothMissing && !firstHasNose ? second : first;
+					Villager conversationSubject = conversationSpeaker == first ? second : first;
+					List<List<String>> choices = bothMissing
+						? TWO_MISSING_NOSES_CONVERSATIONS : ONE_MISSING_NOSE_CONVERSATIONS;
+					List<String> sequence = choices.get(Math.floorMod(pair.hashCode() + (int) (ticks / LONG_COOLDOWN), choices.size()));
+					if (playId(conversationSpeaker, sequence.getFirst(), "nose_conversation:" + pair + ":" + sequence.getFirst(),
+							LONG_COOLDOWN, conversationSubject)) {
+						holdListener(conversationSubject, conversationSpeaker, DialogueCatalog.byId(sequence.getFirst()).durationTicks());
+						queueConversation(level, conversationSpeaker, conversationSubject, sequence);
 						PAIR_TICKS.put(pair, 0);
-						return;
 					}
+					return;
+				}
+				CastProfile firstCast = cast(first);
+				CastProfile secondCast = cast(second);
+				String meetId = meetDialogue(firstCast == CastProfile.VILLAGER ? secondCast : firstCast);
+				if (meetId != null && (firstCast == CastProfile.VILLAGER || secondCast == CastProfile.VILLAGER)) {
+					Villager speaker = firstCast == CastProfile.VILLAGER ? first : second;
+					Villager subject = speaker == first ? second : first;
+					if (playId(speaker, meetId, "meet:" + pair, LONG_COOLDOWN, subject)) {
+						holdListener(subject, speaker, 80L);
+						PAIR_TICKS.put(pair, 0);
+					}
+					return;
+				}
+				boolean atCampfire = nearBlock(level, first.blockPosition(), "campfire", 4)
+					&& nearBlock(level, second.blockPosition(), "campfire", 4);
+				boolean negativeGossip = isNegativeReputation(first, player) || isNegativeReputation(second, player);
+				String conversation = atCampfire ? CAMPFIRE_CONVERSATION.getFirst()
+					: first.getVehicle() != null && first.getVehicle() == second.getVehicle()
+					? "zqfvby"
+					: negativeGossip && first.getDeltaMovement().horizontalDistanceSqr()
+						+ second.getDeltaMovement().horizontalDistanceSqr() < 0.0004
+						? (Math.floorMod(pair.hashCode() + (int) (ticks / LONG_COOLDOWN), 2) == 0 ? "wrjbdd" : GOSSIP_CONVERSATION.getFirst())
+						: wanderingConversation(pair).getFirst();
+				if (playId(first, conversation, "conversation:" + pair + ":" + conversation, LONG_COOLDOWN, second)) {
+					holdListener(second, first, DialogueCatalog.byId(conversation).durationTicks());
+					if (conversation.startsWith("gmrypk")) queueWanderingConversation(level, first, second, wanderingConversation(pair));
+					else if (atCampfire) queueConversation(level, first, second, CAMPFIRE_CONVERSATION);
+					else if (conversation.equals(GOSSIP_CONVERSATION.getFirst())) queueConversation(level, first, second, GOSSIP_CONVERSATION);
+					PAIR_TICKS.put(pair, 0);
+					return;
 				}
 			}
 
@@ -1236,7 +1358,7 @@ public final class ContextualDialogueController {
 			VILLAGER_STATES.put(villager.getUUID(), current);
 			return;
 		}
-		if (wasSleeping) playTitle(villager, "Wake Up Naturally", "wake:" + villager.getUUID(), LONG_COOLDOWN);
+		if (wasSleeping) playSharedTitle(villager, "Wake Up Naturally", "wake:" + villager.getUUID(), LONG_COOLDOWN, null);
 		LAST_SLEEPING.put(villager.getUUID(), false);
 		ItemStack pickedUp = findNewItem(villager, oldInventory);
 		if (pickedUp != null) {
@@ -1271,15 +1393,6 @@ public final class ContextualDialogueController {
 				String id = current.baby ? (lower.equals("dragon") ? "cmrqhw" : "gzsztp")
 					: lower.equals("dinnerbone") ? "qmpcxi" : lower.equals("jeb") || lower.equals("jeb_") ? "armupg" : "spfsrr";
 				playId(villager, id, "name:" + villager.getUUID() + ":" + current.name, 1L);
-			} else if (current.poisoned && !previous.poisoned) {
-				playId(villager, "onindz", "effect:poison:" + villager.getUUID(), SHORT_COOLDOWN);
-			} else if (current.slowed && !previous.slowed) {
-				playId(villager, "xemyaj", "effect:slowness:" + villager.getUUID(), SHORT_COOLDOWN);
-			} else if (current.weakened && !previous.weakened) {
-				playId(villager, "yebifs", "effect:weakness:" + villager.getUUID(), SHORT_COOLDOWN);
-			} else if (previous.suffocating && !current.suffocating) {
-				interrupt(villager);
-				playId(villager, "fxbysi", "freed:" + villager.getUUID(), SHORT_COOLDOWN);
 			}
 			if (!previous.working && current.working) {
 				playId(villager, "qawras", "work_start:" + villager.getUUID(), LONG_COOLDOWN, workstation == null ? null : Vec3.atCenterOf(workstation));
@@ -1289,6 +1402,7 @@ public final class ContextualDialogueController {
 					workstation == null ? null : Vec3.atCenterOf(workstation));
 			}
 		}
+		processConditionDialogues(villager);
 		if (!current.profession.equals("none") && !current.profession.equals("nitwit") && workstation == null) {
 			long since = NO_WORKSTATION_SINCE.computeIfAbsent(villager.getUUID(), ignored -> ticks);
 			if (ticks - since >= 600L) {
@@ -1352,8 +1466,131 @@ public final class ContextualDialogueController {
 	private static VillagerSnapshot snapshot(Villager villager, boolean working) {
 		String name = villager.hasCustomName() && villager.getCustomName() != null ? villager.getCustomName().getString() : "";
 		return new VillagerSnapshot(villager.isBaby(), profession(villager), villager.getVillagerData().level(), working, name,
-			villager.hasEffect(MobEffects.POISON), villager.hasEffect(MobEffects.SLOWNESS), villager.hasEffect(MobEffects.WEAKNESS),
 			villager.isInWall());
+	}
+
+	private static int activeConditionMask(Villager villager) {
+		int active = 0;
+		if (villager.hasEffect(MobEffects.POISON)) active |= CONDITION_POISON;
+		if (villager.hasEffect(MobEffects.SLOWNESS)) active |= CONDITION_SLOWNESS;
+		if (villager.hasEffect(MobEffects.WEAKNESS)) active |= CONDITION_WEAKNESS;
+		if (villager.isInLava()) active |= CONDITION_LAVA;
+		else if (villager.isOnFire()) active |= CONDITION_FIRE;
+		if (villager.isFullyFrozen()) active |= CONDITION_FROZEN;
+		if (villager.isInWall()) active |= CONDITION_SUFFOCATING;
+		return active;
+	}
+
+	private static boolean conditionIncludesDialogue(int active, String dialogue) {
+		for (int index = 0; index < CONDITION_DIALOGUES.length; index++) {
+			if ((active & CONDITION_BITS[index]) != 0 && CONDITION_DIALOGUES[index].equals(dialogue)) return true;
+		}
+		return false;
+	}
+
+	private static String conditionDialogueAt(int active, int ordinal) {
+		for (int index = 0; index < CONDITION_BITS.length; index++) {
+			if ((active & CONDITION_BITS[index]) == 0) continue;
+			if (ordinal-- == 0) return CONDITION_DIALOGUES[index];
+		}
+		return null;
+	}
+
+	private static boolean canSpeakDuringCondition(Villager villager, String dialogue) {
+		if (dialogue.equals("hivgme") || dialogue.equals("ecslqo")) return true;
+		PendingConditionRelief relief = PENDING_CONDITION_RELIEF.get(villager.getUUID());
+		int active = activeConditionMask(villager);
+		if (active == 0) return relief == null || relief.dialogueId.equals(dialogue);
+		if (conditionIncludesDialogue(active, dialogue)) return true;
+		if (villager.isBaby()) return dialogue.equals("ahcvzd") || dialogue.equals("ecslqo");
+		CastProfile profile = cast(villager);
+		return profile != CastProfile.VILLAGER && (dialogue.equals(profile.hurt) || dialogue.equals(profile.attack));
+	}
+
+	private static void processConditionDialogues(Villager villager) {
+		UUID id = villager.getUUID();
+		Long previousConditionTick = CONDITION_LAST_TICK.put(id, ticks);
+		if (previousConditionTick != null && previousConditionTick == ticks) {
+			// The same villager can be visible to multiple players during one 10-tick observation pass.
+			// Only evaluate its condition state once for that server tick.
+			return;
+		}
+		int active = activeConditionMask(villager);
+		if (active == 0) {
+			Integer history = CONDITION_HISTORY.remove(id);
+			CONDITION_CURSORS.remove(id);
+			if (history != null && history != 0) queueConditionRelief(villager, history, ticks + 1L);
+			return;
+		}
+		PENDING_CONDITION_RELIEF.remove(id);
+		Integer previousHistory = CONDITION_HISTORY.get(id);
+		CONDITION_HISTORY.put(id, previousHistory == null ? active : previousHistory | active);
+		PENDING_SPEECH.removeIf(pending -> pending.speakerId.equals(id) || id.equals(pending.targetId));
+		CastProfile profile = villager.isBaby() ? CastProfile.VILLAGER : cast(villager);
+		int reactionCount = villager.isBaby() || profile != CastProfile.VILLAGER ? 1 : Integer.bitCount(active);
+		ActiveSound sound = ACTIVE_SOUNDS.get(id);
+		if (sound != null && sound.endTick > ticks) {
+			boolean matching = villager.isBaby() ? sound.groupId.equals("ecslqo")
+				: profile != CastProfile.VILLAGER ? sound.groupId.equals(profile.hurt)
+				: conditionIncludesDialogue(active, sound.groupId);
+			if (matching) return;
+		}
+		if (isBusy(villager)) interrupt(villager);
+		int cursor = Math.floorMod(CONDITION_CURSORS.getOrDefault(id, 0), reactionCount);
+		for (int offset = 0; offset < reactionCount; offset++) {
+			int index = (cursor + offset) % reactionCount;
+			String dialogue = villager.isBaby() ? "ecslqo"
+				: profile != CastProfile.VILLAGER ? profile.hurt : conditionDialogueAt(active, index);
+			if (dialogue == null) break;
+			String key = "condition:" + id + ":" + dialogue;
+			if (playId(villager, dialogue, key, 1L)) {
+				CONDITION_CURSORS.put(id, index + 1);
+				break;
+			}
+		}
+	}
+
+	private static boolean queueConditionRelief(Villager villager, int conditions, long dueTick) {
+		String dialogue;
+		if (villager.isBaby()) dialogue = "wsxfok";
+		else if (cast(villager) == CastProfile.VILLAGER) {
+			dialogue = (conditions & CONDITION_SUFFOCATING) != 0 ? "fxbysi" : "wbbxpo";
+		} else return false;
+		LAST_DANGER.remove(villager.getUUID());
+		PENDING_CONDITION_RELIEF.put(villager.getUUID(),
+			new PendingConditionRelief((ServerLevel) villager.level(), villager.getUUID(), dialogue, dueTick));
+		return true;
+	}
+
+	private static void processPendingConditionRelief() {
+		PENDING_CONDITION_RELIEF.entrySet().removeIf(entry -> {
+			PendingConditionRelief pending = entry.getValue();
+			if (pending.dueTick > ticks) return false;
+			Entity entity = pending.level.getEntity(pending.villagerId);
+			if (!(entity instanceof Villager villager) || !villager.isAlive()) return true;
+			if (activeConditionMask(villager) != 0) return false;
+			ActiveSound sound = ACTIVE_SOUNDS.get(villager.getUUID());
+			if (sound != null && sound.endTick > ticks && DAMAGE_LOCK_DIALOGUES.contains(sound.groupId)) return false;
+			if (isBusy(villager)) interrupt(villager);
+			return playId(villager, pending.dialogueId,
+				"condition_relief:" + villager.getUUID() + ":" + pending.dialogueId, 1L);
+		});
+	}
+
+	private static boolean queueFreedSuffocationRelief(ServerLevel level, BlockPos pos) {
+		AABB block = new AABB(pos.getX(), pos.getY(), pos.getZ(), pos.getX() + 1.0, pos.getY() + 1.0, pos.getZ() + 1.0);
+		boolean queued = false;
+		for (Villager villager : nearbyVillagers(level, Vec3.atCenterOf(pos), 4.0)) {
+			Integer history = CONDITION_HISTORY.get(villager.getUUID());
+			VillagerSnapshot snapshot = VILLAGER_STATES.get(villager.getUUID());
+			boolean wasSuffocating = history != null && (history & CONDITION_SUFFOCATING) != 0
+				|| snapshot != null && snapshot.suffocating;
+			if (!wasSuffocating || !villager.getBoundingBox().inflate(0.25).intersects(block)) continue;
+			CONDITION_HISTORY.remove(villager.getUUID());
+			CONDITION_CURSORS.remove(villager.getUUID());
+			queued |= queueConditionRelief(villager, CONDITION_SUFFOCATING, ticks + 1L);
+		}
+		return queued;
 	}
 
 	private static String profession(Villager villager) {
@@ -1523,7 +1760,7 @@ public final class ContextualDialogueController {
 	private static boolean playDamageDialogue(LivingEntity speaker, String id, String cooldownKey,
 			net.minecraft.world.damagesource.DamageSource source, Entity target) {
 		DialogueCatalog.DialogueGroup group = DialogueCatalog.byId(id);
-		long cooldown = source.getEntity() == null ? SHORT_COOLDOWN
+		long cooldown = ONGOING_DAMAGE_DIALOGUES.contains(id) ? 1L : source.getEntity() == null ? SHORT_COOLDOWN
 			: group == null ? 20L : group.durationTicks() + 20L;
 		if (isPlaying(speaker, id) || !ready(cooldownKey, cooldown)) return false;
 		interrupt(speaker);
@@ -1564,12 +1801,14 @@ public final class ContextualDialogueController {
 	private static String damageDialogue(net.minecraft.world.damagesource.DamageSource source) {
 		String attacker = source.getEntity() == null ? "" : BuiltInRegistries.ENTITY_TYPE.getKey(source.getEntity().getType()).getPath();
 		String direct = source.getDirectEntity() == null ? "" : BuiltInRegistries.ENTITY_TYPE.getKey(source.getDirectEntity().getType()).getPath();
-		String damage = source.getMsgId().toLowerCase(Locale.ROOT);
 		if (direct.equals("arrow")) return "huhcbd";
 		if (direct.equals("snowball")) return "dlrxes";
-		if (direct.equals("falling_block")) return "yzqpvi";
-		if (direct.equals("firework_rocket")) return "gesjov";
-		if (direct.equals("potion") || direct.equals("lingering_potion")) return damage.contains("magic") ? "gacgtq" : "hmadgp";
+		if (source.is(DamageTypes.FALLING_ANVIL)) return "yzqpvi";
+		if (source.is(DamageTypes.STALAGMITE) || source.is(DamageTypes.FALLING_STALACTITE)) return "nsxmkr";
+		if (direct.equals("firework_rocket") || source.is(DamageTypes.FIREWORKS)) return "gesjov";
+		if (direct.equals("potion") || direct.equals("lingering_potion")) {
+			return source.is(DamageTypes.MAGIC) || source.is(DamageTypes.INDIRECT_MAGIC) ? "gacgtq" : "hmadgp";
+		}
 		if (source.getEntity() instanceof Player player && source.getDirectEntity() == player) {
 			return weaponAttackDialogue(player.getMainHandItem());
 		}
@@ -1581,15 +1820,15 @@ public final class ContextualDialogueController {
 		if (attacker.equals("witch")) return "rtikom";
 		if (attacker.equals("zoglin")) return "hfmwvf";
 		if (attacker.contains("zombie") || attacker.equals("drowned") || attacker.equals("husk")) return "mytmrk";
-		if (damage.contains("lightning")) return "ikrwzy";
-		if (damage.contains("explosion")) return "fcbygh";
-		if (damage.contains("fire")) return "etkxko";
-		if (damage.contains("lava")) return "elryje";
-		if (damage.contains("cactus")) return "rogpvp";
-		if (damage.contains("freeze")) return "igebly";
-		if (damage.contains("wall")) return "vnaodx";
-		if (damage.contains("stalagmite")) return "nsxmkr";
-		if (damage.contains("fall")) return "cifbit";
+		if (source.is(DamageTypes.LIGHTNING_BOLT)) return "ikrwzy";
+		if (source.is(DamageTypes.EXPLOSION) || source.is(DamageTypes.PLAYER_EXPLOSION)) return "fcbygh";
+		if (source.is(DamageTypes.LAVA)) return "elryje";
+		if (source.is(DamageTypes.IN_FIRE) || source.is(DamageTypes.ON_FIRE) || source.is(DamageTypes.CAMPFIRE)
+				|| source.is(DamageTypes.HOT_FLOOR) || source.is(DamageTypes.SULFUR_CUBE_HOT)) return "etkxko";
+		if (source.is(DamageTypes.CACTUS) || source.is(DamageTypes.SWEET_BERRY_BUSH)) return "rogpvp";
+		if (source.is(DamageTypes.FREEZE)) return "igebly";
+		if (source.is(DamageTypes.IN_WALL) || source.is(DamageTypes.CRAMMING)) return "vnaodx";
+		if (source.is(DamageTypes.FALL)) return "cifbit";
 		return "wyvzhk";
 	}
 
@@ -1651,9 +1890,10 @@ public final class ContextualDialogueController {
 				return InteractionResult.SUCCESS;
 			}
 			if (villager.isSleeping()) {
-				INTERRUPTED_SLEEP.add(villager.getUUID());
+				UUID id = villager.getUUID();
+				WAKE_SOURCES.put(id, player.getUUID());
+				INTERRUPTED_SLEEP.add(id);
 				villager.stopSleeping();
-				playId(villager, "viwaal", "wake_interact:" + villager.getUUID(), SHORT_COOLDOWN, player);
 				return InteractionResult.PASS;
 			}
 			ensureSpecialTrade(villager);
@@ -1843,7 +2083,9 @@ public final class ContextualDialogueController {
 
 	private static void onAttackEntity(Player player, Entity entity) {
 		if (!(entity instanceof Villager villager) || !villager.isSleeping()) return;
-		INTERRUPTED_SLEEP.add(villager.getUUID());
+		UUID id = villager.getUUID();
+		WAKE_SOURCES.put(id, player.getUUID());
+		INTERRUPTED_SLEEP.add(id);
 		villager.stopSleeping();
 	}
 
@@ -2026,7 +2268,7 @@ public final class ContextualDialogueController {
 	private static boolean playObserved(ServerLevel level, Player player, Vec3 eventPosition, String title, long cooldown) {
 		Villager speaker = nearbyVillagers(level, eventPosition, OBSERVER_RANGE).stream()
 			.filter(villager -> !villager.isBaby() && !villager.isSleeping())
-			.filter(villager -> cast(villager) != CastProfile.UNREACHABLE)
+			.filter(villager -> cast(villager) == CastProfile.VILLAGER)
 			.filter(villager -> villager.hasLineOfSight(player))
 			.min(Comparator.comparingDouble(villager -> villager.distanceToSqr(eventPosition)))
 			.orElse(null);
@@ -2084,13 +2326,17 @@ public final class ContextualDialogueController {
 	private static boolean play(LivingEntity speaker, DialogueCatalog.DialogueGroup group, String cooldownKey, long cooldown,
 			Entity target, Vec3 targetPosition, boolean sharedAdult) {
 		boolean sharedVillagerVoice = speaker instanceof Villager villager && !villager.isBaby()
+			&& cast(villager) == CastProfile.VILLAGER
 			|| speaker instanceof WanderingTrader;
 		boolean validSpeaker = matchesSpeaker(speaker, group) || sharedAdult && sharedVillagerVoice
 			&& group.speaker().equals("villager");
+		boolean blockedByCondition = speaker instanceof Villager conditionVillager
+			&& !canSpeakDuringCondition(conditionVillager, group.id());
 		if (!(speaker.level() instanceof ServerLevel level) || !validSpeaker
 				|| !level.getServer().tickRateManager().runsNormally()
 				|| !VillagerNewsSettings.dialogueEnabled()
-				|| speaker instanceof Villager villager && villager.isSleeping() && !group.id().equals("asqzby")
+				|| blockedByCondition
+				|| speaker instanceof Villager sleepingVillager && sleepingVillager.isSleeping() && !group.id().equals("asqzby")
 				|| isBusy(speaker)
 				|| !ready(cooldownKey, VillagerNewsSettings.scaleCooldown(cooldown))) return false;
 		List<Integer> recentVariants = SHARED_RECENT_VARIANTS.getOrDefault(group.id(), List.of());
@@ -2479,12 +2725,23 @@ public final class ContextualDialogueController {
 	}
 
 	private record VillagerSnapshot(boolean baby, String profession, int level, boolean working, String name,
-			boolean poisoned, boolean slowed, boolean weakened, boolean suffocating) {
+			boolean suffocating) {
 	}
 
 	private record SpeechTarget(UUID targetId, Vec3 position, long untilTick, boolean lockMovement) {
 	}
 
+	private record PendingConditionRelief(ServerLevel level, UUID villagerId, String dialogueId, long dueTick) {
+	}
+
+	private record PendingWake(ServerLevel level, UUID villagerId, String dialogueId, UUID targetId, long dueTick) {
+	}
+
+	private record PendingBell(ServerLevel level, Vec3 position, long dueTick) {
+	}
+
+	private record PendingBellReaction(ServerLevel level, UUID villagerId, Vec3 position, long dueTick, long expireTick) {
+	}
 	private record PendingSpeech(ServerLevel level, UUID speakerId, String dialogueId, UUID targetId, long dueTick,
 			boolean sharedAdult) {
 		private PendingSpeech(ServerLevel level, UUID speakerId, String dialogueId, UUID targetId, long dueTick) {

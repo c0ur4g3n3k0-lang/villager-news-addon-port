@@ -6,6 +6,7 @@
     "AbstractVillagerMixin",
     "BlockItemMixin",
     "SheepSoundMixin",
+    "SpawnEggItemMixin",
     "VillagerDataMixin",
     "VillagerSleepMixin",
     "VillagerSoundMixin",

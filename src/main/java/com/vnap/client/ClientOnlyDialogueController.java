@@ -48,6 +48,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ThreadLocalRandom;
 
 /**
  * Runs the locally observable part of contextual dialogue when the remote server does not expose
@@ -63,15 +64,35 @@ public final class ClientOnlyDialogueController {
 		"nxalcz", "qrdzmt", "rfnirh", "saxuwk", "svdjdk", "vbclem", "vhwksn", "wkwcrf",
 		"wsxfok", "wtuguc", "zeykfp", "cxeziv", "riezum", "rlkdqd"
 	);
+	private static final int CONDITION_POISON = 1;
+	private static final int CONDITION_SLOWNESS = 1 << 1;
+	private static final int CONDITION_WEAKNESS = 1 << 2;
+	private static final int CONDITION_LAVA = 1 << 3;
+	private static final int CONDITION_FIRE = 1 << 4;
+	private static final int CONDITION_FROZEN = 1 << 5;
+	private static final int CONDITION_SUFFOCATING = 1 << 6;
+	private static final int[] CONDITION_BITS = {
+		CONDITION_POISON, CONDITION_SLOWNESS, CONDITION_WEAKNESS, CONDITION_LAVA,
+		CONDITION_FIRE, CONDITION_FROZEN, CONDITION_SUFFOCATING
+	};
+	private static final String[] CONDITION_DIALOGUES = {
+		"onindz", "xemyaj", "yebifs", "elryje", "etkxko", "igebly", "vnaodx"
+	};
 	private static final Map<String, Long> COOLDOWNS = new HashMap<>();
 	private static final Map<UUID, Long> BUSY_UNTIL = new HashMap<>();
 	private static final Map<UUID, ActiveDialogue> ACTIVE_DIALOGUES = new HashMap<>();
 	private static final Map<String, List<Integer>> RECENT_VARIANTS = new HashMap<>();
 	private static final Map<UUID, EntitySnapshot> ENTITY_SNAPSHOTS = new HashMap<>();
 	private static final Map<UUID, VillagerSnapshot> VILLAGER_SNAPSHOTS = new HashMap<>();
+	private static final Map<UUID, Integer> CONDITION_HISTORY = new HashMap<>();
+	private static final Map<UUID, Integer> CONDITION_CURSORS = new HashMap<>();
+	private static final Map<UUID, String> PENDING_CONDITION_RELIEF = new HashMap<>();
 	private static final Map<UUID, PendingAttack> PENDING_ATTACKS = new HashMap<>();
+	private static final Map<UUID, PendingWake> PENDING_WAKES = new HashMap<>();
 	private static final Map<BlockPos, PendingPlacement> PENDING_PLACEMENTS = new HashMap<>();
 	private static final Map<BlockPos, PendingBreak> PENDING_BREAKS = new HashMap<>();
+	private static final List<PendingBell> PENDING_BELLS = new ArrayList<>();
+	private static final List<PendingBellReaction> PENDING_BELL_REACTIONS = new ArrayList<>();
 	private static final Set<UUID> ENCOUNTERS = new HashSet<>();
 	private static ClientLevel activeLevel;
 	private static Vec3 lastPlayerPosition;
@@ -107,6 +128,10 @@ public final class ClientOnlyDialogueController {
 			BlockState clicked = level.getBlockState(hitResult.getBlockPos());
 			String clickedPath = blockPath(clicked);
 			boolean itemOnlyInteraction = player.isSecondaryUseActive() && !held.isEmpty();
+			if (!itemOnlyInteraction && clickedPath.equals("bell") && level instanceof ClientLevel clientLevel) {
+				queueBell(clientLevel, hitResult.getLocation());
+				return InteractionResult.PASS;
+			}
 			String title = selectHeldBlockContext(held, clicked);
 			if (title == null && !itemOnlyInteraction) title = selectUseBlockContext(clicked);
 			if (!itemOnlyInteraction && clickedPath.endsWith("_door") && clicked.hasProperty(BlockStateProperties.OPEN)
@@ -114,13 +139,7 @@ public final class ClientOnlyDialogueController {
 					&& !nearbyVillagers(level, hitResult.getLocation(), 3.0).isEmpty()) {
 				title = "Close a Door in a Villager's Face";
 			}
-			boolean played = title != null && playObserved(level, player, hitResult.getLocation(), title, SHORT_COOLDOWN);
-			if (!played && !itemOnlyInteraction && clickedPath.equals("bell")) {
-				nearbyVillagers(level, hitResult.getLocation(), OBSERVER_RANGE).stream()
-					.filter(villager -> villager.isBaby() && !villager.isSleeping())
-					.min(Comparator.comparingDouble(villager -> villager.distanceToSqr(hitResult.getLocation())))
-					.ifPresent(baby -> playId(baby, "nxalcz", "baby_bell:" + baby.getUUID(), SHORT_COOLDOWN, false));
-			}
+			if (title != null) playObserved(level, player, hitResult.getLocation(), title, SHORT_COOLDOWN);
 			return InteractionResult.PASS;
 		});
 
@@ -139,6 +158,9 @@ public final class ClientOnlyDialogueController {
 
 		AttackEntityCallback.EVENT.register((player, level, hand, entity, hitResult) -> {
 			if (accepts(player, level) && entity instanceof LivingEntity) {
+				if (entity instanceof Villager villager && villager.isSleeping()) {
+					PENDING_WAKES.put(villager.getUUID(), new PendingWake(player.getUUID(), ticks + 40L));
+				}
 				PENDING_ATTACKS.put(entity.getUUID(), new PendingAttack(itemPath(player.getItemInHand(hand)), ticks + 20L));
 			}
 			return InteractionResult.PASS;
@@ -169,7 +191,8 @@ public final class ClientOnlyDialogueController {
 		BUSY_UNTIL.entrySet().removeIf(entry -> entry.getValue() <= ticks);
 		processPendingPlacements(minecraft.level, minecraft.player);
 		processPendingBreaks(minecraft.level, minecraft.player);
-		processEntityChanges(minecraft.level, minecraft.player);
+		processPendingBells();
+		if (ticks % 2L == 0L) processEntityChanges(minecraft.level, minecraft.player);
 		processTrade(minecraft);
 		if (ticks % 10L == 0L) processPlayer(minecraft.level, minecraft.player);
 		if (ticks % 20L == 0L) processVillagerStates(minecraft.level, minecraft.player);
@@ -187,9 +210,15 @@ public final class ClientOnlyDialogueController {
 		RECENT_VARIANTS.clear();
 		ENTITY_SNAPSHOTS.clear();
 		VILLAGER_SNAPSHOTS.clear();
+		CONDITION_HISTORY.clear();
+		CONDITION_CURSORS.clear();
+		PENDING_CONDITION_RELIEF.clear();
 		PENDING_ATTACKS.clear();
+		PENDING_WAKES.clear();
 		PENDING_PLACEMENTS.clear();
 		PENDING_BREAKS.clear();
+		PENDING_BELLS.clear();
+		PENDING_BELL_REACTIONS.clear();
 		ENCOUNTERS.clear();
 		activeLevel = null;
 		lastPlayerPosition = null;
@@ -248,6 +277,35 @@ public final class ClientOnlyDialogueController {
 			}
 			playObserved(level, player, Vec3.atCenterOf(position), title, SHORT_COOLDOWN);
 			return true;
+		});
+	}
+
+	private static void queueBell(ClientLevel level, Vec3 position) {
+		boolean queued = PENDING_BELLS.stream().anyMatch(pending -> pending.level == level
+			&& pending.position.distanceToSqr(position) < 0.25 && pending.dueTick > ticks);
+		if (!queued) PENDING_BELLS.add(new PendingBell(level, position, ticks + 15L));
+	}
+
+	private static void processPendingBells() {
+		PENDING_BELLS.removeIf(pending -> {
+			if (pending.dueTick > ticks) return false;
+			for (Villager villager : nearbyVillagers(pending.level, pending.position, 50.0)) {
+				if (villager.isSleeping() || cast(villager) != CastProfile.VILLAGER) continue;
+				long dueTick = ticks + ThreadLocalRandom.current().nextInt(5);
+				PENDING_BELL_REACTIONS.add(new PendingBellReaction(pending.level, villager.getUUID(), pending.position,
+					dueTick, dueTick + 10L));
+			}
+			return true;
+		});
+		PENDING_BELL_REACTIONS.removeIf(pending -> {
+			if (pending.dueTick > ticks) return false;
+			Entity entity = pending.level.getEntity(pending.villagerId);
+			if (!(entity instanceof Villager villager) || !villager.isAlive() || villager.isSleeping()
+					|| cast(villager) != CastProfile.VILLAGER) return true;
+			if (isBusy(villager)) return ticks >= pending.expireTick;
+			String id = villager.isBaby() ? "nxalcz" : "kljgyu";
+			return playId(villager, id, "bell:" + pending.dueTick + ":" + villager.getUUID(), 1L, false)
+				|| ticks >= pending.expireTick;
 		});
 	}
 
@@ -440,13 +498,19 @@ public final class ClientOnlyDialogueController {
 			visible.add(villager.getUUID());
 			VillagerSnapshot current = snapshot(villager);
 			VillagerSnapshot previous = VILLAGER_SNAPSHOTS.put(villager.getUUID(), current);
+			if (!villager.isSleeping()) processConditionDialogues(villager);
 			if (villager.isSleeping()) {
 				playTitle(villager, "Sleeping", "sleeping:" + villager.getUUID(), LONG_COOLDOWN, true);
 				continue;
 			}
 			if (previous == null) continue;
 			if (previous.sleeping() && !current.sleeping()) {
-				playTitle(villager, "Wake Up Naturally", "wake:" + villager.getUUID(), LONG_COOLDOWN, true);
+				PendingWake wake = PENDING_WAKES.remove(villager.getUUID());
+				if (wake != null && wake.expiresAt() >= ticks) {
+					playId(villager, "viwaal", "wake_interact:" + villager.getUUID(), 1L, true);
+				} else {
+					playTitle(villager, "Wake Up Naturally", "wake:" + villager.getUUID(), LONG_COOLDOWN, true);
+				}
 			} else if (previous.baby() && !current.baby()) {
 				playId(villager, "smvnbj", "grow:" + villager.getUUID(), 1L, false);
 			} else if ((previous.profession().equals("none") || previous.profession().equals("nitwit"))
@@ -460,14 +524,6 @@ public final class ClientOnlyDialogueController {
 				String id = current.baby() ? (lower.equals("dragon") ? "cmrqhw" : "gzsztp")
 					: lower.equals("dinnerbone") ? "qmpcxi" : lower.equals("jeb") || lower.equals("jeb_") ? "armupg" : "spfsrr";
 				playId(villager, id, "name:" + villager.getUUID() + ":" + current.name(), 1L, false);
-			} else if (current.poisoned() && !previous.poisoned()) {
-				playId(villager, "onindz", "effect:poison:" + villager.getUUID(), SHORT_COOLDOWN, false);
-			} else if (current.slowed() && !previous.slowed()) {
-				playId(villager, "xemyaj", "effect:slowness:" + villager.getUUID(), SHORT_COOLDOWN, false);
-			} else if (current.weakened() && !previous.weakened()) {
-				playId(villager, "yebifs", "effect:weakness:" + villager.getUUID(), SHORT_COOLDOWN, false);
-			} else if (previous.suffocating() && !current.suffocating()) {
-				playId(villager, "fxbysi", "freed:" + villager.getUUID(), SHORT_COOLDOWN, false);
 			}
 			if (villager.isBaby() && villager.getDeltaMovement().horizontalDistanceSqr() > 0.02) {
 				DayOfWeek day = LocalDate.now().getDayOfWeek();
@@ -476,6 +532,94 @@ public final class ClientOnlyDialogueController {
 			}
 		}
 		VILLAGER_SNAPSHOTS.keySet().retainAll(visible);
+		CONDITION_HISTORY.keySet().retainAll(visible);
+		CONDITION_CURSORS.keySet().retainAll(visible);
+		PENDING_CONDITION_RELIEF.keySet().retainAll(visible);
+		PENDING_WAKES.entrySet().removeIf(entry -> entry.getValue().expiresAt() < ticks || !visible.contains(entry.getKey()));
+	}
+
+	private static int activeConditionMask(Villager villager) {
+		int active = 0;
+		if (villager.hasEffect(MobEffects.POISON)) active |= CONDITION_POISON;
+		if (villager.hasEffect(MobEffects.SLOWNESS)) active |= CONDITION_SLOWNESS;
+		if (villager.hasEffect(MobEffects.WEAKNESS)) active |= CONDITION_WEAKNESS;
+		if (villager.isInLava()) active |= CONDITION_LAVA;
+		else if (villager.isOnFire()) active |= CONDITION_FIRE;
+		if (villager.isFullyFrozen()) active |= CONDITION_FROZEN;
+		if (villager.isInWall()) active |= CONDITION_SUFFOCATING;
+		return active;
+	}
+
+	private static boolean conditionIncludesDialogue(int active, String dialogue) {
+		for (int index = 0; index < CONDITION_DIALOGUES.length; index++) {
+			if ((active & CONDITION_BITS[index]) != 0 && CONDITION_DIALOGUES[index].equals(dialogue)) return true;
+		}
+		return false;
+	}
+
+	private static String conditionDialogueAt(int active, int ordinal) {
+		for (int index = 0; index < CONDITION_BITS.length; index++) {
+			if ((active & CONDITION_BITS[index]) == 0) continue;
+			if (ordinal-- == 0) return CONDITION_DIALOGUES[index];
+		}
+		return null;
+	}
+
+	private static boolean canSpeakDuringCondition(Villager villager, String dialogue) {
+		if (dialogue.equals("hivgme") || dialogue.equals("ecslqo")) return true;
+		int active = activeConditionMask(villager);
+		String relief = PENDING_CONDITION_RELIEF.get(villager.getUUID());
+		if (active == 0) return relief == null || relief.equals(dialogue);
+		if (conditionIncludesDialogue(active, dialogue)) return true;
+		if (villager.isBaby()) return dialogue.equals("ahcvzd") || dialogue.equals("ecslqo");
+		CastProfile profile = cast(villager);
+		return profile != CastProfile.VILLAGER && (dialogue.equals(profile.hurt) || dialogue.equals(profile.attack));
+	}
+
+	private static void processConditionDialogues(Villager villager) {
+		UUID id = villager.getUUID();
+		int active = activeConditionMask(villager);
+		if (active == 0) {
+			Integer history = CONDITION_HISTORY.remove(id);
+			CONDITION_CURSORS.remove(id);
+			if (history != null && history != 0 && !PENDING_CONDITION_RELIEF.containsKey(id)) {
+				String relief = villager.isBaby() ? "wsxfok"
+					: cast(villager) == CastProfile.VILLAGER
+						? ((history & CONDITION_SUFFOCATING) != 0 ? "fxbysi" : "wbbxpo")
+						: null;
+				if (relief != null) PENDING_CONDITION_RELIEF.put(id, relief);
+			}
+			String relief = PENDING_CONDITION_RELIEF.get(id);
+			if (relief != null && !isBusy(villager)
+					&& playId(villager, relief, "condition_relief:" + id + ":" + relief, 1L, false)) {
+				PENDING_CONDITION_RELIEF.remove(id);
+			}
+			return;
+		}
+		PENDING_CONDITION_RELIEF.remove(id);
+		Integer previousHistory = CONDITION_HISTORY.get(id);
+		CONDITION_HISTORY.put(id, previousHistory == null ? active : previousHistory | active);
+		CastProfile profile = villager.isBaby() ? CastProfile.VILLAGER : cast(villager);
+		int reactionCount = villager.isBaby() || profile != CastProfile.VILLAGER ? 1 : Integer.bitCount(active);
+		ActiveDialogue current = ACTIVE_DIALOGUES.get(id);
+		if (current != null && current.endTick() > ticks) {
+			boolean matching = villager.isBaby() ? current.groupId().equals("ecslqo")
+				: profile != CastProfile.VILLAGER ? current.groupId().equals(profile.hurt)
+				: conditionIncludesDialogue(active, current.groupId());
+			if (matching) return;
+		}
+		if (isBusy(villager)) stopDialogue(id);
+		int cursor = Math.floorMod(CONDITION_CURSORS.getOrDefault(id, 0), reactionCount);
+		for (int offset = 0; offset < reactionCount; offset++) {
+			int index = (cursor + offset) % reactionCount;
+			String dialogue = villager.isBaby() ? "ecslqo"
+				: profile != CastProfile.VILLAGER ? profile.hurt : conditionDialogueAt(active, index);
+			if (dialogue == null) break;
+			if (playId(villager, dialogue, "condition:" + id + ":" + dialogue, 1L, false)) {
+				CONDITION_CURSORS.put(id, index + 1);
+				break;
+			}
+		}
 	}
 
 	private static void processTrade(Minecraft minecraft) {
@@ -543,7 +687,7 @@ public final class ClientOnlyDialogueController {
 				return;
 			}
 			if (villager.isSleeping()) {
-				playId(villager, "viwaal", "wake_interact:" + villager.getUUID(), SHORT_COOLDOWN, false);
+				PENDING_WAKES.put(villager.getUUID(), new PendingWake(player.getUUID(), ticks + 40L));
 				return;
 			}
 			if (villager.isBaby()) {
@@ -567,7 +711,8 @@ public final class ClientOnlyDialogueController {
 
 	private static boolean playObserved(Level level, Player player, Vec3 position, String title, long cooldown) {
 		Villager speaker = nearbyVillagers(level, position, OBSERVER_RANGE).stream()
-			.filter(villager -> !villager.isBaby() && !villager.isSleeping() && villager.hasLineOfSight(player))
+			.filter(villager -> !villager.isBaby() && !villager.isSleeping() && cast(villager) == CastProfile.VILLAGER
+				&& villager.hasLineOfSight(player))
 			.min(Comparator.comparingDouble(villager -> villager.distanceToSqr(position))).orElse(null);
 		return speaker != null && playTitle(speaker, title,
 			"observed:" + speaker.getUUID() + ":" + title, cooldown, true);
@@ -585,9 +730,13 @@ public final class ClientOnlyDialogueController {
 
 	private static boolean play(LivingEntity speaker, DialogueCatalog.DialogueGroup group, String key, long cooldown,
 			boolean sharedAdult) {
-		boolean sharedVoice = speaker instanceof Villager villager && !villager.isBaby() || speaker instanceof WanderingTrader;
+		boolean sharedVoice = speaker instanceof Villager villager && !villager.isBaby() && cast(villager) == CastProfile.VILLAGER
+			|| speaker instanceof WanderingTrader;
+		boolean blockedByCondition = speaker instanceof Villager conditionVillager
+			&& !canSpeakDuringCondition(conditionVillager, group.id());
 		if (!(matchesSpeaker(speaker, group) || sharedAdult && sharedVoice && group.speaker().equals("villager"))
-				|| isBusy(speaker) || !ready(key, VillagerNewsSettings.scaleCooldown(cooldown))) return false;
+				|| blockedByCondition || isBusy(speaker)
+				|| !ready(key, VillagerNewsSettings.scaleCooldown(cooldown))) return false;
 		List<Integer> recent = RECENT_VARIANTS.getOrDefault(group.id(), List.of());
 		DialogueCatalog.DialogueVariant variant = group.chooseVariant(VillagerNewsSettings.rareVoicelines(), Set.copyOf(recent));
 		if (variant == null) return false;
@@ -680,8 +829,7 @@ public final class ClientOnlyDialogueController {
 	private static VillagerSnapshot snapshot(Villager villager) {
 		String name = villager.hasCustomName() && villager.getCustomName() != null ? villager.getCustomName().getString() : "";
 		return new VillagerSnapshot(villager.isBaby(), profession(villager), villager.getVillagerData().level(), name,
-			villager.isSleeping(), villager.hasEffect(MobEffects.POISON), villager.hasEffect(MobEffects.SLOWNESS),
-			villager.hasEffect(MobEffects.WEAKNESS), villager.isInWall());
+			villager.isSleeping());
 	}
 
 	private static String profession(Villager villager) {
@@ -797,7 +945,7 @@ public final class ClientOnlyDialogueController {
 	private static String playerContext(Player player) {
 		if (player.isFallFlying()) return "Glide with Elytra";
 		if (player.isCreative() && player.getAbilities().flying) return "Fly in Creative Mode";
-		if (player.isShiftKeyDown() && player.getDeltaMovement().horizontalDistanceSqr() > 0.002) return "Crouch-Walk";
+		if (player.isShiftKeyDown() && player.getDeltaMovement().horizontalDistanceSqr() > 0.0001) return "Crouch-Walk";
 		if (player.getHealth() <= player.getMaxHealth() * 0.3F) return "Low Health";
 		if (player.hasEffect(MobEffects.INVISIBILITY)) return "Invisibility";
 		if (player.hasEffect(MobEffects.DARKNESS)) return "Darkness";
@@ -1017,14 +1165,22 @@ public final class ClientOnlyDialogueController {
 		}
 	}
 
+	private record PendingWake(UUID sourceId, long expiresAt) {
+	}
+
+	private record PendingBell(ClientLevel level, Vec3 position, long dueTick) {
+	}
+
+	private record PendingBellReaction(ClientLevel level, UUID villagerId, Vec3 position, long dueTick, long expireTick) {
+	}
+
 	private record ActiveDialogue(String groupId, long endTick) {
 	}
 
 	private record EntitySnapshot(int hurtTime, int deathTime, boolean alive) {
 	}
 
-	private record VillagerSnapshot(boolean baby, String profession, int level, String name, boolean sleeping,
-		boolean poisoned, boolean slowed, boolean weakened, boolean suffocating) {
+	private record VillagerSnapshot(boolean baby, String profession, int level, String name, boolean sleeping) {
 	}
 
 	private record PendingAttack(String itemPath, long expiresAt) {
